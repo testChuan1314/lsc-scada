@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data volumes (runtime)
+influxdb_data/
+nodered_data/
+pg_data/
+
+# MQTT
+mosquitto/data/
+mosquitto/log/
+
+# Uploads (user content)
+app/static/uploads/
+
+# InfluxDB dump
+*.tar.gz
+
+# ESP32
+esp32_firmware/.pio/
+
+# Environment secrets
+.env
+*.local.json
+qd/*

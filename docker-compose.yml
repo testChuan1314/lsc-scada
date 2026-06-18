@@ -1,0 +1,94 @@
+services:
+  # 1. MQTT 消息中间件 (邮局)
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    container_name: lsc_mqtt
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mqtt_data:/mosquitto/data
+      - mqtt_log:/mosquitto/log
+    restart: always
+
+  # 2. 关系型数据库 (大脑：只存设备和传感器配置表，不存高频历史)
+  local-db:
+    image: postgres:15-alpine
+    container_name: lsc_db
+    environment:
+      POSTGRES_USER: lsc_admin
+      POSTGRES_PASSWORD: lsc_password_2026
+      POSTGRES_DB: lsc_scada
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: always
+
+  # 2.5 PostgreSQL Web 管理 (pgAdmin)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: lsc_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@lsc.com
+      PGADMIN_DEFAULT_PASSWORD: lsc_admin_2026
+    ports:
+      - "5050:80"
+    restart: always
+    depends_on:
+      - local-db
+
+  # 3. 时序数据库 (大容量仓库：专门疯狂吞噬带时间戳的传感器历史数据)
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: lsc_influx
+    ports:
+      - "8086:8086"
+    volumes:
+      - ./influxdb_data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=lsc_admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=lsc_influx_2026
+      - DOCKER_INFLUXDB_INIT_ORG=lsc-scada
+      - DOCKER_INFLUXDB_INIT_BUCKET=scada
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=lsc-token-2026
+    restart: always
+
+  # 4. Node-RED (可视化看板与低代码联动)
+  node-red:
+    image: nodered/node-red:latest
+    container_name: lsc_nodered
+    ports:
+      - "1880:1880"
+    volumes:
+      - ./nodered_data:/data
+    user: "1000:1000" # Avoid permission issues on Linux
+    restart: always
+    depends_on:
+      - mqtt-broker
+
+  # 5. 自研 Python 主站解析程序 (翻译官：接收 Hex，解析，分别灌入 Postgres 和 InfluxDB)
+  scada-app:
+    build: ./app
+    container_name: lsc_app
+    restart: always
+    depends_on:
+      - mqtt-broker
+      - local-db
+      - influxdb
+    environment:
+      - MQTT_HOST=mqtt-broker
+      - DB_HOST=local-db
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=lsc-token-2026
+      - INFLUX_ORG=lsc-scada
+      - INFLUX_BUCKET=scada
+      - DB_USER=lsc_admin
+      - DB_PASSWORD=lsc_password_2026
+      - DB_NAME=lsc_scada
+
+volumes:
+  mqtt_data:
+  mqtt_log:
+  db_data:
