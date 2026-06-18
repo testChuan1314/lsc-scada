@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LSC SCADA 管理台</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --border:#334155; --text:#e2e8f0; --muted:#94a3b8;
+          --blue:#3b82f6; --red:#ef4444; --green:#22c55e; --amber:#f59e0b; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; }
+  /* Sidebar */
+  nav { width:200px; background:var(--card); border-right:1px solid var(--border); padding:20px 0; flex-shrink:0; }
+  nav .logo { padding:0 18px 20px; font-size:1.1rem; font-weight:700; border-bottom:1px solid var(--border); margin-bottom:8px; }
+  nav a { display:block; padding:10px 18px; color:var(--muted); text-decoration:none; font-size:.85rem; transition:.12s; cursor:pointer; }
+  nav a:hover, nav a.active { color:var(--text); background:rgba(59,130,246,.1); border-right:2px solid var(--blue); }
+  /* Main */
+  main { flex:1; padding:24px; overflow-y:auto; }
+  .page { display:none; }
+  .page.active { display:block; }
+  h2 { font-size:1.2rem; margin-bottom:4px; }
+  .sub { color:var(--muted); font-size:.8rem; margin-bottom:18px; }
+  /* Toolbar */
+  .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:10px; flex-wrap:wrap; }
+  .btn { padding:7px 18px; border:none; border-radius:6px; font-size:.82rem; cursor:pointer; transition:.15s; }
+  .btn-primary { background:var(--blue); color:#fff; } .btn-primary:hover { filter:brightness(1.15); }
+  .btn-danger { background:var(--red); color:#fff; } .btn-danger:hover { filter:brightness(1.15); }
+  .btn-sm { padding:4px 10px; font-size:.78rem; }
+  .btn-outline { background:transparent; border:1px solid var(--border); color:var(--text); }
+  .btn-outline:hover { background:var(--border); }
+  .btn-amber { background:var(--amber); color:#000; }
+  select { padding:6px 10px; background:var(--card); border:1px solid var(--border); color:var(--text); border-radius:6px; font-size:.82rem; }
+  /* Table */
+  .table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:8px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; padding:9px 12px; font-size:.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:.05em;
+       border-bottom:1px solid var(--border); background:#162033; white-space:nowrap; }
+  td { padding:8px 12px; font-size:.85rem; border-bottom:1px solid var(--border); }
+  tr:hover td { background:rgba(59,130,246,.04); }
+  .actions { display:flex; gap:5px; }
+  code { background:var(--bg); padding:1px 5px; border-radius:3px; font-size:.82em; }
+  /* Modal */
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100; justify-content:center; align-items:center; }
+  .overlay.show { display:flex; }
+  .modal { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; width:90%; max-width:480px; max-height:85vh; overflow-y:auto; }
+  .modal h3 { margin-bottom:16px; }
+  .form-group { margin-bottom:12px; }
+  .form-group label { display:block; font-size:.78rem; color:var(--muted); margin-bottom:3px; }
+  .form-group input, .form-group select { width:100%; padding:7px 10px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; font-size:.85rem; }
+  .form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:18px; }
+  .toast { position:fixed; bottom:24px; right:24px; padding:12px 20px; border-radius:8px; font-size:.82rem; z-index:200;
+           opacity:0; transform:translateY(10px); transition:.25s; }
+  .toast.show { opacity:1; transform:translateY(0); }
+  .toast-ok { background:var(--green); color:#000; }
+  .toast-err { background:var(--red); color:#fff; }
+  .empty { text-align:center; padding:36px; color:var(--muted); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">🛰 LSC SCADA</div>
+  <a data-page="dashboard" style="color:#22c55e;">📊 数据看板</a>
+  <a data-page="areas">📍 区域管理</a>
+  <a data-page="trees">🌳 盆景树</a>
+  <a class="active" data-page="esp">📡 ESP 设备</a>
+  <a data-page="brands">🏷 传感器品牌</a>
+  <a data-page="templates">📋 模板管理</a>
+  <a data-page="registers">🔧 寄存器定义</a>
+  <a data-page="instances">🔗 传感器实例</a>
+  <a data-page="relays">⚡ 继电器</a>
+</nav>
+
+<main>
+  <!-- ==================== 数据看板 ==================== -->
+  <div class="page active" id="page-dashboard">
+    <h2>实时数据看板</h2><p class="sub">按传感器类型分组 &nbsp;|&nbsp; 每个面板独立图表</p>
+    <div class="toolbar">
+      <select id="dash-esp-filter" onchange="loadDashboard()"><option value="">全部 ESP</option></select>
+      <select id="dash-range" onchange="loadDashboard()">
+        <option value="5">5 分钟</option>
+        <option value="15">15 分钟</option>
+        <option value="30" selected>30 分钟</option>
+        <option value="60">1 小时</option>
+        <option value="180">3 小时</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted);">
+        <input type="checkbox" id="dash-auto-refresh" checked onchange="toggleAutoRefresh()"> 自动刷新
+      </label>
+    </div>
+    <div id="dash-panels" style="display:flex;flex-direction:column;gap:16px;">
+      <span style="color:var(--muted);">加载中...</span>
+    </div>
+  </div>
+
+  <!-- ==================== 区域管理 ==================== -->
+  <div class="page" id="page-areas">
+    <h2>区域管理</h2><p class="sub">大棚 / 养护区 / 展示区</p>
+    <div class="toolbar"><button class="btn btn-primary" onclick="openAreaModal()">+ 新增区域</button></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>名称</th><th>ESP数量</th><th>树木数量</th><th>描述</th><th>操作</th></tr></thead><tbody id="area-tbody"></tbody></table></div>
+  </div>
+
+  <!-- ==================== 盆景树 ==================== -->
+  <div class="page" id="page-trees">
+    <h2>盆景树</h2><p class="sub">全生命周期管理 &middot; 点击卡片查看详情</p>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openTreeModal()">+ 新增树</button>
+      <select id="tree-filter-area" onchange="loadTrees()"><option value="">全部区域</option></select>
+      <select id="tree-filter-species" onchange="loadTrees()"><option value="">全部树种</option></select>
+      <select id="tree-filter-health" onchange="loadTrees()"><option value="">全部状态</option><option>健康</option><option>病虫害</option><option>恢复中</option><option>休眠</option></select>
+    </div>
+    <div id="tree-cards" style="display:flex;flex-wrap:wrap;gap:16px;"></div>
+  </div>
+
+  <!-- ==================== 盆景树详情 ==================== -->
+  <div class="page" id="page-tree-detail">
+    <div class="toolbar">
+      <button class="btn btn-outline" onclick="switchTab('trees');loadTrees();">&larr; 返回列表</button>
+      <button class="btn btn-primary btn-sm" onclick="openTreeModal(treeDetailData)" style="margin-left:auto;">编辑信息</button>
+      <button class="btn btn-primary btn-sm" onclick="openEventModal()">+ 事件</button>
+      <button class="btn btn-amber btn-sm" onclick="document.getElementById('photo-upload-input').click()">📷 上传照片</button>
+      <input type="file" id="photo-upload-input" accept="image/*" style="display:none" onchange="uploadPhoto(this)">
+    </div>
+    <div id="tree-detail-content"></div>
+  </div>
+
+  <!-- ==================== ESP 设备 ==================== -->
+  <div class="page" id="page-esp">
+    <h2>ESP 采集节点</h2><p class="sub">管理所有边缘 ESP32 设备</p>
+    <div class="toolbar"><button class="btn btn-primary" onclick="openEspModal()">+ 新增 ESP</button><button class="btn btn-amber" onclick="dispatchConfig()" style="margin-left:8px;">⬇ 下发配置</button><span id="esp-dispatch-status" style="font-size:.78rem;color:var(--muted);margin-left:8px;"></span></div>
+    <div class="table-wrap"><table><thead><tr><th>ESP ID</th><th>名称</th><th>区域</th><th>位置</th><th>MQTT Topic</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="esp-tbody"></tbody></table></div>
+  </div>
+
+  <!-- ==================== 品牌 ==================== -->
+  <div class="page" id="page-brands">
+    <h2>传感器品牌</h2><p class="sub">管理传感器制造商</p>
+    <div class="toolbar"><button class="btn btn-primary" onclick="openBrandModal()">+ 新增品牌</button></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>品牌名</th><th>官网</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="brand-tbody"></tbody></table></div>
+  </div>
+
+  <!-- ==================== 模板 ==================== -->
+  <div class="page" id="page-templates">
+    <h2>传感器模板</h2><p class="sub">每个品牌 × 型号 = 一个模板</p>
+    <div class="toolbar"><button class="btn btn-primary" onclick="openTemplateModal()">+ 新增模板</button></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>品牌</th><th>型号</th><th>描述</th><th>波特率</th><th>起始地址</th><th>读取数</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="template-tbody"></tbody></table></div>
+  </div>
+
+  <!-- ==================== 寄存器定义 ==================== -->
+  <div class="page" id="page-registers">
+    <h2>寄存器定义</h2><p class="sub">定义每个模板的 Modbus 寄存器映射</p>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openRegisterModal()">+ 新增寄存器</button>
+      <select id="reg-filter-template" onchange="loadRegisters()"><option value="">全部模板</option></select>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>模板</th><th>地址</th><th>名称</th><th>类型</th><th>倍率</th><th>单位</th><th>描述</th><th>操作</th></tr></thead><tbody id="reg-tbody"></tbody></table></div>
+  </div>
+
+  <!-- ==================== 传感器实例 ==================== -->
+  <div class="page" id="page-instances">
+    <h2>传感器实例</h2><p class="sub">将模板绑定到 ESP + 从站地址</p>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openInstanceModal()">+ 新增实例</button>
+      <select id="inst-filter-esp" onchange="loadInstances()"><option value="">全部ESP</option></select>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>ESP</th><th>品牌</th><th>型号</th><th>从站地址</th><th>别名</th><th>绑定树木</th><th>操作</th></tr></thead><tbody id="inst-tbody"></tbody></table></div>
+  </div>
+
+  <!-- ==================== 继电器 ==================== -->
+  <div class="page" id="page-relays">
+    <h2>继电器</h2><p class="sub">管理 ESP 上挂载的继电器通道</p>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openRelayModal()">+ 新增继电器</button>
+      <select id="relay-filter-esp" onchange="loadRelays()"><option value="">全部ESP</option></select>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>ESP</th><th>通道</th><th>名称</th><th>寄存器地址</th><th>操作</th></tr></thead><tbody id="relay-tbody"></tbody></table></div>
+  </div>
+</main>
+
+<!-- ====== ESP Modal ====== -->
+<div class="overlay" id="esp-modal"><div class="modal">
+  <h3 id="esp-modal-title">新增 ESP</h3>
+  <div class="form-group"><label>ESP ID *</label><input id="f-esp-id" placeholder="例: rtu-001"></div>
+  <div class="form-group"><label>名称</label><input id="f-esp-name" placeholder="厂区1号采集器"></div>
+  <div class="form-group"><label>位置</label><input id="f-esp-location" placeholder="A区配电房"></div>
+  <div class="form-group"><label>MQTT Topic</label><input id="f-esp-topic" placeholder="lsc/devices/rtu-001/data"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('esp-modal')">取消</button><button class="btn btn-primary" onclick="saveEsp()">保存</button></div>
+</div></div>
+
+<!-- ====== Brand Modal ====== -->
+<div class="overlay" id="brand-modal"><div class="modal">
+  <h3 id="brand-modal-title">新增品牌</h3>
+  <div class="form-group"><label>品牌名 *</label><input id="f-brand-name" placeholder="例: 仁科"></div>
+  <div class="form-group"><label>官网</label><input id="f-brand-web" placeholder="www.example.com"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('brand-modal')">取消</button><button class="btn btn-primary" onclick="saveBrand()">保存</button></div>
+</div></div>
+
+<!-- ====== Template Modal ====== -->
+<div class="overlay" id="template-modal"><div class="modal">
+  <h3 id="template-modal-title">新增模板</h3>
+  <div class="form-group"><label>品牌 *</label><select id="f-tpl-brand"></select></div>
+  <div class="form-group"><label>型号 *</label><input id="f-tpl-model" placeholder="例: RS-ECTH-N01-TR-1"></div>
+  <div class="form-group"><label>描述</label><input id="f-tpl-desc" placeholder="土壤温度水分电导率三合一"></div>
+  <div class="form-group"><label>波特率</label><input id="f-tpl-baud" value="4800" type="number"></div>
+  <div class="form-group"><label>轮询起始地址 (Hex)</label><input id="f-tpl-poll-start" value="0" placeholder="例: 0x0000"></div>
+  <div class="form-group"><label>轮询读取个数</label><input id="f-tpl-poll-count" value="1" type="number" placeholder="覆盖空洞需要更大的 count"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('template-modal')">取消</button><button class="btn btn-primary" onclick="saveTemplate()">保存</button></div>
+</div></div>
+
+<!-- ====== Register Modal ====== -->
+<div class="overlay" id="register-modal"><div class="modal">
+  <h3 id="register-modal-title">新增寄存器定义</h3>
+  <div class="form-group"><label>模板 *</label><select id="f-reg-tpl"></select></div>
+  <div class="form-group"><label>寄存器地址 (Hex) *</label><input id="f-reg-addr" placeholder="例: 0x0000 或 0"></div>
+  <div class="form-group"><label>名称 *</label><input id="f-reg-name" placeholder="例: temperature"></div>
+  <div class="form-group"><label>数据类型</label><select id="f-reg-type"><option>uint16</option><option>int16</option><option>uint32</option><option>float32</option></select></div>
+  <div class="form-group"><label>倍率</label><input id="f-reg-mul" value="1.0" type="number" step="0.01"></div>
+  <div class="form-group"><label>单位</label><input id="f-reg-unit" placeholder="例: °C"></div>
+  <div class="form-group"><label>描述</label><input id="f-reg-desc" placeholder="A相绕组温度"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('register-modal')">取消</button><button class="btn btn-primary" onclick="saveRegister()">保存</button></div>
+</div></div>
+
+<!-- ====== Instance Modal ====== -->
+<div class="overlay" id="instance-modal"><div class="modal">
+  <h3 id="instance-modal-title">新增传感器实例</h3>
+  <div class="form-group"><label>ESP *</label><select id="f-inst-esp"></select></div>
+  <div class="form-group"><label>模板 *</label><select id="f-inst-tpl"></select></div>
+  <div class="form-group"><label>RS485 从站地址</label><input id="f-inst-slave" value="1" type="number" min="1" max="254"></div>
+  <div class="form-group"><label>别名</label><input id="f-inst-name" placeholder="进线柜A相温度传感器"></div>
+  <div class="form-group"><label>绑定盆景树 (可选)</label><select id="f-inst-tree"><option value="">不绑定</option></select></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('instance-modal')">取消</button><button class="btn btn-primary" onclick="saveInstance()">保存</button></div>
+</div></div>
+
+<!-- ====== Relay Modal ====== -->
+<div class="overlay" id="relay-modal"><div class="modal">
+  <h3 id="relay-modal-title">新增继电器</h3>
+  <div class="form-group"><label>ESP *</label><select id="f-relay-esp"></select></div>
+  <div class="form-group"><label>通道 *</label><input id="f-relay-channel" type="number" placeholder="0"></div>
+  <div class="form-group"><label>名称</label><input id="f-relay-name" placeholder="1号风机"></div>
+  <div class="form-group"><label>控制寄存器地址</label><input id="f-relay-addr" placeholder="例: 0x0064" type="number"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('relay-modal')">取消</button><button class="btn btn-primary" onclick="saveRelay()">保存</button></div>
+</div></div>
+
+<!-- ====== Area Modal ====== -->
+<div class="overlay" id="area-modal"><div class="modal">
+  <h3 id="area-modal-title">新增区域</h3>
+  <div class="form-group"><label>名称 *</label><input id="f-area-name" placeholder="例: A区大棚"></div>
+  <div class="form-group"><label>描述</label><input id="f-area-desc" placeholder="室内大棚养护区"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('area-modal')">取消</button><button class="btn btn-primary" onclick="saveArea()">保存</button></div>
+</div></div>
+
+<!-- ====== Tree Modal ====== -->
+<div class="overlay" id="tree-modal"><div class="modal">
+  <h3 id="tree-modal-title">新增树</h3>
+  <div class="form-group"><label>名称 *</label><input id="f-tree-name" placeholder="黑松-001"></div>
+  <div class="form-group"><label>树种</label><input id="f-tree-species" placeholder="黑松"></div>
+  <div class="form-group"><label>品种</label><input id="f-tree-variety" placeholder="寸梢黑松"></div>
+  <div class="form-group" style="display:flex;gap:8px;">
+    <span style="flex:1"><label>树龄(年)</label><input id="f-tree-age" type="number"></span>
+    <span style="flex:1"><label>高度(cm)</label><input id="f-tree-height" type="number" step="0.1"></span>
+  </div>
+  <div class="form-group" style="display:flex;gap:8px;">
+    <span style="flex:1"><label>干径(cm)</label><input id="f-tree-trunk" type="number" step="0.1"></span>
+    <span style="flex:1"><label>冠幅(cm)</label><input id="f-tree-crown" type="number" step="0.1"></span>
+  </div>
+  <div class="form-group"><label>区域</label><select id="f-tree-area"></select></div>
+  <div class="form-group"><label>盆型</label><input id="f-tree-pot" placeholder="方盆"></div>
+  <div class="form-group"><label>来源</label><input id="f-tree-source" placeholder="日本进口"></div>
+  <div class="form-group"><label>健康状态</label><select id="f-tree-health"><option>健康</option><option>病虫害</option><option>恢复中</option><option>休眠</option></select></div>
+  <div class="form-group"><label>描述</label><input id="f-tree-desc" placeholder="备注"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('tree-modal')">取消</button><button class="btn btn-primary" onclick="saveTree()">保存</button></div>
+</div></div>
+
+<!-- ====== Event Modal ====== -->
+<div class="overlay" id="event-modal"><div class="modal">
+  <h3 id="event-modal-title">新增事件</h3>
+  <div class="form-group"><label>标题 *</label><input id="f-ev-title" placeholder="春季摘芽"></div>
+  <div class="form-group"><label>日期 *</label><input id="f-ev-date" type="date"></div>
+  <div class="form-group" style="display:flex;gap:8px;">
+    <span style="flex:1"><label>大类</label><select id="f-ev-cat"><option>养护</option><option>造型</option><option>换盆</option><option>繁殖</option><option>健康</option><option>观赏</option><option>价值</option><option>展示</option><option>日常</option></select></span>
+    <span style="flex:1"><label>小类</label><input id="f-ev-type" placeholder="修剪/浇水/施肥"></span>
+  </div>
+  <div class="form-group"><label>操作人</label><input id="f-ev-person" placeholder="老李"></div>
+  <div class="form-group"><label>描述</label><input id="f-ev-desc" placeholder="去除顶部强势芽"></div>
+  <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('event-modal')">取消</button><button class="btn btn-primary" onclick="saveEvent()">保存</button></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ======================== 导航 ========================
+function switchTab(page) {
+  if (page !== 'tree-detail') stopTreeRefresh();
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const target = document.getElementById('page-' + page);
+  if (target) target.classList.add('active');
+  // 高亮对应菜单（树详情无菜单项，跳过）
+  document.querySelectorAll('nav a').forEach(a => { a.classList.remove('active'); if (a.dataset.page === page) a.classList.add('active'); });
+  const loaders = {dashboard:loadDashboard, areas:loadAreas, trees:loadTrees, esp:loadEsp, brands:loadBrands, templates:loadTemplates, registers:loadRegisters, instances:loadInstances, relays:loadRelays};
+  if (loaders[page]) loaders[page]();
+}
+document.querySelectorAll('nav a').forEach(a => {
+  a.addEventListener('click', () => switchTab(a.dataset.page));
+});
+
+// ======================== Toast / Modal ========================
+function toast(msg, ok=true) { const el=document.getElementById('toast'); el.textContent=msg; el.className='toast toast-'+(ok?'ok':'err')+' show'; setTimeout(()=>el.classList.remove('show'),2500); }
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function fmt(ts) { return ts?new Date(ts+'Z').toLocaleString('zh-CN'):'-'; }
+async function api(url, opts) { const r=await fetch(url,opts); if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||'请求失败');} return r.json(); }
+
+// ======================== ESP ========================
+let editingEspId=null;
+async function loadEsp() {
+  const data = await api('/api/esp');
+  const t = document.getElementById('esp-tbody');
+  t.innerHTML = data.length ? data.map(d=>`<tr>
+    <td><code>${d.esp_id}</code></td><td>${d.name||'-'}</td><td>${d.area_name||'-'}</td><td>${d.location||'-'}</td><td><code>${d.mqtt_topic||'-'}</code></td><td>${fmt(d.created_at)}</td>
+    <td class="actions"><button class="btn btn-outline btn-sm" onclick="openEspModal('${d.esp_id}','${d.name||''}','${d.location||''}','${d.mqtt_topic||''}')">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delEsp('${d.esp_id}')">删除</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">暂无 ESP 设备</td></tr>';
+}
+function openEspModal(id='',name='',loc='',topic='') {
+  editingEspId=id; document.getElementById('esp-modal-title').textContent=id?'编辑 ESP':'新增 ESP';
+  document.getElementById('f-esp-id').value=id; document.getElementById('f-esp-id').disabled=!!id;
+  document.getElementById('f-esp-name').value=name; document.getElementById('f-esp-location').value=loc; document.getElementById('f-esp-topic').value=topic;
+  openModal('esp-modal');
+}
+async function saveEsp() {
+  const esp_id=document.getElementById('f-esp-id').value.trim(), name=document.getElementById('f-esp-name').value.trim(),
+        location=document.getElementById('f-esp-location').value.trim(), mqtt_topic=document.getElementById('f-esp-topic').value.trim();
+  if(!esp_id) return toast('ESP ID 不能为空',false);
+  if(editingEspId) await api('/api/esp/'+encodeURIComponent(editingEspId),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,location,mqtt_topic})});
+  else await api('/api/esp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({esp_id,name,location,mqtt_topic})});
+  closeModal('esp-modal'); loadEsp(); toast(editingEspId?'已更新':'已创建');
+}
+async function delEsp(id) { if(!confirm('删除 ESP "'+id+'" 将级联删除其下传感器实例和继电器。确定？')) return; await api('/api/esp/'+encodeURIComponent(id),{method:'DELETE'}); loadEsp(); toast('已删除'); }
+
+// ======================== 品牌 ========================
+let editingBrandId=null;
+async function loadBrands() {
+  const data = await api('/api/brands');
+  const t = document.getElementById('brand-tbody');
+  t.innerHTML = data.length ? data.map(d=>`<tr>
+    <td>${d.id}</td><td><strong>${d.brand_name}</strong></td><td>${d.website||'-'}</td><td>${fmt(d.created_at)}</td>
+    <td class="actions"><button class="btn btn-outline btn-sm" onclick="openBrandModal(${d.id},'${d.brand_name}','${d.website||''}')">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delBrand(${d.id})">删除</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">暂无品牌</td></tr>';
+}
+function openBrandModal(id='',name='',web='') {
+  editingBrandId=id; document.getElementById('brand-modal-title').textContent=id?'编辑品牌':'新增品牌';
+  document.getElementById('f-brand-name').value=name; document.getElementById('f-brand-web').value=web;
+  openModal('brand-modal');
+}
+async function saveBrand() {
+  const brand_name=document.getElementById('f-brand-name').value.trim(), website=document.getElementById('f-brand-web').value.trim();
+  if(!brand_name) return toast('品牌名不能为空',false);
+  if(editingBrandId) await api('/api/brands/'+editingBrandId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand_name,website})});
+  else await api('/api/brands',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand_name,website})});
+  closeModal('brand-modal'); loadBrands(); toast(editingBrandId?'已更新':'已创建');
+}
+async function delBrand(id) { if(!confirm('确定删除？将级联删除旗下模板。')) return; await api('/api/brands/'+id,{method:'DELETE'}); loadBrands(); toast('已删除'); }
+
+// ======================== 模板 ========================
+let editingTemplateId=null;
+async function loadTemplates() {
+  const data = await api('/api/templates');
+  const t = document.getElementById('template-tbody');
+  t.innerHTML = data.length ? data.map(d=>`<tr>
+    <td>${d.id}</td><td>${d.brand_name||'-'}</td><td><code>${d.model}</code></td><td>${d.description||'-'}</td><td>${d.baud_rate}</td>
+    <td><code>0x${(d.poll_start_addr||0).toString(16).toUpperCase().padStart(4,'0')}</code></td><td>${d.poll_count||1}</td><td>${fmt(d.created_at)}</td>
+    <td class="actions"><button class="btn btn-outline btn-sm" onclick="openTemplateModal(${d.id},${d.brand_id},'${d.model}','${d.description||''}',${d.baud_rate},${d.poll_start_addr||0},${d.poll_count||1})">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delTemplate(${d.id})">删除</button></td></tr>`).join('') : '<tr><td colspan="9" class="empty">暂无模板</td></tr>';
+  // 同步填充下拉框
+  loadTemplateOptions();
+}
+async function loadTemplateOptions() {
+  const data = await api('/api/templates');
+  ['reg-filter-template','f-inst-tpl','f-reg-tpl'].forEach(sid=>{
+    const sel=document.getElementById(sid); if(!sel) return;
+    const v=sel.value; sel.innerHTML='<option value="">请选择</option>'+data.map(d=>`<option value="${d.id}">${d.brand_name} ${d.model}</option>`).join('');
+    sel.value=v;
+  });
+}
+function openTemplateModal(id='',brand_id='',model='',desc='',baud=4800,poll_start=0,poll_count=1) {
+  editingTemplateId=id; document.getElementById('template-modal-title').textContent=id?'编辑模板':'新增模板';
+  loadBrandsToSelect('f-tpl-brand', brand_id);
+  document.getElementById('f-tpl-model').value=model; document.getElementById('f-tpl-desc').value=desc; document.getElementById('f-tpl-baud').value=baud;
+  document.getElementById('f-tpl-poll-start').value='0x'+poll_start.toString(16).toUpperCase();
+  document.getElementById('f-tpl-poll-count').value=poll_count;
+  openModal('template-modal');
+}
+async function loadBrandsToSelect(sid, selected) {
+  const data=await api('/api/brands'); const sel=document.getElementById(sid);
+  sel.innerHTML=data.map(d=>`<option value="${d.id}" ${d.id==selected?'selected':''}>${d.brand_name}</option>`).join('');
+}
+async function saveTemplate() {
+  const brand_id=parseInt(document.getElementById('f-tpl-brand').value), model=document.getElementById('f-tpl-model').value.trim(),
+        description=document.getElementById('f-tpl-desc').value.trim(), baud_rate=parseInt(document.getElementById('f-tpl-baud').value)||4800;
+  let poll_start_str=document.getElementById('f-tpl-poll-start').value.trim();
+  const poll_start_addr=poll_start_str.startsWith('0x')?parseInt(poll_start_str,16):parseInt(poll_start_str,10)||0;
+  const poll_count=parseInt(document.getElementById('f-tpl-poll-count').value)||1;
+  if(!brand_id) return toast('请选择品牌',false);
+  if(!model) return toast('型号不能为空',false);
+  if(editingTemplateId) await api('/api/templates/'+editingTemplateId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,description,baud_rate,poll_start_addr,poll_count})});
+  else await api('/api/templates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand_id,model,description,baud_rate,poll_start_addr,poll_count})});
+  closeModal('template-modal'); loadTemplates(); toast(editingTemplateId?'已更新':'已创建');
+}
+async function delTemplate(id) { if(!confirm('确定删除？将级联删除寄存器定义。')) return; await api('/api/templates/'+id,{method:'DELETE'}); loadTemplates(); toast('已删除'); }
+
+// ======================== 寄存器定义 ========================
+let editingRegId=null;
+async function loadRegisters() {
+  const tid=document.getElementById('reg-filter-template').value;
+  const data = await api('/api/registers'+(tid?'?template_id='+tid:''));
+  const t = document.getElementById('reg-tbody');
+  t.innerHTML = data.length ? data.map(d=>`<tr>
+    <td>${d.id}</td><td>${d.template_id}</td><td><code>0x${d.reg_address.toString(16).toUpperCase().padStart(4,'0')}</code></td>
+    <td><strong>${d.reg_name}</strong></td><td>${d.data_type}</td><td>${d.multiplier}</td><td>${d.unit||'-'}</td><td>${d.description||'-'}</td>
+    <td class="actions"><button class="btn btn-outline btn-sm" onclick="openRegisterModal(${d.id},${d.template_id},${d.reg_address},'${d.reg_name}','${d.data_type}',${d.multiplier},'${d.unit||''}','${d.description||''}')">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delRegister(${d.id})">删除</button></td></tr>`).join('') : '<tr><td colspan="9" class="empty">暂无寄存器定义</td></tr>';
+}
+function openRegisterModal(id='',tid='',addr=0,name='',type='uint16',mul=1.0,unit='',desc='') {
+  editingRegId=id; document.getElementById('register-modal-title').textContent=id?'编辑寄存器':'新增寄存器';
+  document.getElementById('f-reg-tpl').value=tid; document.getElementById('f-reg-addr').value='0x'+addr.toString(16).toUpperCase();
+  document.getElementById('f-reg-name').value=name; document.getElementById('f-reg-type').value=type;
+  document.getElementById('f-reg-mul').value=mul; document.getElementById('f-reg-unit').value=unit; document.getElementById('f-reg-desc').value=desc;
+  openModal('register-modal');
+}
+async function saveRegister() {
+  const template_id=parseInt(document.getElementById('f-reg-tpl').value);
+  let addr_str=document.getElementById('f-reg-addr').value.trim();
+  const reg_address=addr_str.startsWith('0x')?parseInt(addr_str,16):parseInt(addr_str,10);
+  const reg_name=document.getElementById('f-reg-name').value.trim(), data_type=document.getElementById('f-reg-type').value,
+        multiplier=parseFloat(document.getElementById('f-reg-mul').value)||1.0,
+        unit=document.getElementById('f-reg-unit').value.trim(), description=document.getElementById('f-reg-desc').value.trim();
+  if(!template_id) return toast('请选择模板',false);
+  if(!reg_name) return toast('名称不能为空',false);
+  if(editingRegId) await api('/api/registers/'+editingRegId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_name,data_type,multiplier,unit,description})});
+  else await api('/api/registers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template_id,reg_address,reg_name,data_type,multiplier,unit,description})});
+  closeModal('register-modal'); loadRegisters(); toast(editingRegId?'已更新':'已创建');
+}
+async function delRegister(id) { if(!confirm('确定删除？')) return; await api('/api/registers/'+id,{method:'DELETE'}); loadRegisters(); toast('已删除'); }
+
+// ======================== 传感器实例 ========================
+let editingInstId=null;
+async function loadInstances() {
+  const eid=document.getElementById('inst-filter-esp').value;
+  const data = await api('/api/instances'+(eid?'?esp_id='+encodeURIComponent(eid):''));
+  const t = document.getElementById('inst-tbody');
+  t.innerHTML = data.length ? data.map(d=>`<tr>
+    <td>${d.id}</td><td><code>${d.esp_id}</code></td><td>${d.brand_name||'-'}</td><td><code>${d.model||'-'}</code></td>
+    <td>0x${d.slave_address.toString(16).toUpperCase().padStart(2,'0')}</td><td>${d.custom_name||'-'}</td>
+    <td style="font-size:.78rem;">${d.tree_name||'-'}</td>
+    <td class="actions"><button class="btn btn-outline btn-sm" onclick="openInstanceModal(${d.id},'${d.esp_id}',${d.template_id},${d.slave_address},'${d.custom_name||''}',${d.tree_id||''})">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delInstance(${d.id})">删除</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">暂无传感器实例</td></tr>';
+  // 填充过滤下拉
+  loadEspToSelect();
+}
+async function loadEspToSelect() {
+  const data=await api('/api/esp');
+  ['inst-filter-esp','f-inst-esp','relay-filter-esp','f-relay-esp'].forEach(sid=>{
+    const sel=document.getElementById(sid); if(!sel) return;
+    const v=sel.value; sel.innerHTML='<option value="">全部/请选择</option>'+data.map(d=>`<option value="${d.esp_id}">${d.esp_id} (${d.name||'-'})</option>`).join('');
+    sel.value=v;
+  });
+}
+function openInstanceModal(id='',esp_id='',tid='',slave=1,name='',tree_id='') {
+  editingInstId=id; document.getElementById('instance-modal-title').textContent=id?'编辑实例':'新增实例';
+  loadEspToSelect(); loadTemplateOptions(); loadTreeSelect(tree_id);
+  setTimeout(()=>{ document.getElementById('f-inst-esp').value=esp_id; document.getElementById('f-inst-tpl').value=tid; },100);
+  document.getElementById('f-inst-slave').value=slave; document.getElementById('f-inst-name').value=name;
+  openModal('instance-modal');
+}
+async function loadTreeSelect(selected){
+  try{const data=await api('/api/trees'); const sel=document.getElementById('f-inst-tree');
+  sel.innerHTML='<option value="">不绑定</option>'+data.map(t=>`<option value="${t.id}" ${t.id==selected?'selected':''}>${t.name} (${t.species||''})</option>`).join('');}catch(e){}
+}
+async function saveInstance() {
+  const esp_id=document.getElementById('f-inst-esp').value, template_id=parseInt(document.getElementById('f-inst-tpl').value),
+        slave_address=parseInt(document.getElementById('f-inst-slave').value)||1,
+        custom_name=document.getElementById('f-inst-name').value.trim(),
+        tree_id=parseInt(document.getElementById('f-inst-tree').value)||null;
+  if(!esp_id) return toast('请选择 ESP',false);
+  if(!template_id) return toast('请选择模板',false);
+  if(editingInstId) await api('/api/instances/'+editingInstId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({slave_address,custom_name,tree_id})});
+  else await api('/api/instances',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({esp_id,template_id,slave_address,custom_name,tree_id})});
+  closeModal('instance-modal'); loadInstances(); toast(editingInstId?'已更新':'已创建');
+}
+async function unbindSensor(id) {
+  await api('/api/instances/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({tree_id:null})});
+  if(treeDetailData) openTreeDetail(treeDetailData.id); toast('已解绑');
+}
+async function delInstance(id) {
+  if(!confirm('确定删除？')) return;
+  await api('/api/instances/'+id,{method:'DELETE'});
+  if(treeDetailData) openTreeDetail(treeDetailData.id);
+  loadInstances(); toast('已删除');
+}
+
+// ======================== 继电器 ========================
+let editingRelayId=null;
+async function loadRelays() {
+  const eid=document.getElementById('relay-filter-esp').value;
+  const data = await api('/api/relays'+(eid?'?esp_id='+encodeURIComponent(eid):''));
+  const t = document.getElementById('relay-tbody');
+  t.innerHTML = data.length ? data.map(d=>`<tr>
+    <td>${d.id}</td><td><code>${d.esp_id}</code></td><td>${d.channel}</td><td>${d.name||'-'}</td>
+    <td>${d.reg_address!=null?'0x'+d.reg_address.toString(16).toUpperCase():'-'}</td>
+    <td class="actions"><button class="btn btn-sm" style="background:var(--green);color:#000;" onclick="relayControl('${d.esp_id}',${d.channel},true)">ON</button>
+    <button class="btn btn-sm" style="background:var(--red);color:#fff;" onclick="relayControl('${d.esp_id}',${d.channel},false)">OFF</button>
+    <button class="btn btn-outline btn-sm" onclick="openRelayModal(${d.id},'${d.esp_id}',${d.channel},'${d.name||''}',${d.reg_address||0})">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delRelay(${d.id})">删除</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">暂无继电器</td></tr>';
+}
+function openRelayModal(id='',esp_id='',channel=0,name='',addr='') {
+  editingRelayId=id; document.getElementById('relay-modal-title').textContent=id?'编辑继电器':'新增继电器';
+  loadEspToSelect();
+  setTimeout(()=>{ document.getElementById('f-relay-esp').value=esp_id; },100);
+  document.getElementById('f-relay-channel').value=channel; document.getElementById('f-relay-name').value=name;
+  document.getElementById('f-relay-addr').value=addr;
+  openModal('relay-modal');
+}
+async function saveRelay() {
+  const esp_id=document.getElementById('f-relay-esp').value, channel=parseInt(document.getElementById('f-relay-channel').value),
+        name=document.getElementById('f-relay-name').value.trim(),
+        reg_address=document.getElementById('f-relay-addr').value?parseInt(document.getElementById('f-relay-addr').value):null;
+  if(!esp_id) return toast('请选择 ESP',false);
+  if(isNaN(channel)) return toast('通道不能为空',false);
+  if(editingRelayId) await api('/api/relays/'+editingRelayId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,reg_address})});
+  else await api('/api/relays',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({esp_id,channel,name,reg_address})});
+  closeModal('relay-modal'); loadRelays(); toast(editingRelayId?'已更新':'已创建');
+}
+async function delRelay(id) { if(!confirm('确定删除？')) return; await api('/api/relays/'+id,{method:'DELETE'}); loadRelays(); toast('已删除'); }
+
+// ======================== 数据看板 ========================
+let autoRefreshTimer = null;
+const dashCharts = {};           // sensorType -> Chart 实例
+// 传感器 key → 中文名 + 单位映射（支持新旧两种名称）
+const SENSOR_CONFIG = {
+  temperature:      { label: '温度',     unit: '°C',    color: '#ef4444' },
+  humidity:         { label: '湿度',     unit: '%RH',   color: '#3b82f6' },
+  moisture:         { label: '水分',     unit: '%',     color: '#22c55e' },
+  conductivity:     { label: '电导率',   unit: 'μS/cm', color: '#f59e0b' },
+  lux:              { label: '光照度',   unit: 'Lux',   color: '#a855f7' },
+  '土壤温度':       { label: '温度',     unit: '°C',    color: '#ef4444' },
+  '空气温度':       { label: '温度',     unit: '°C',    color: '#f97316' },
+  '空气湿度':       { label: '湿度',     unit: '%RH',   color: '#3b82f6' },
+  '土壤水分':       { label: '水分',     unit: '%',     color: '#22c55e' },
+  '土壤电导率':     { label: '电导率',   unit: 'μS/cm', color: '#f59e0b' },
+  '光照度 0~65535': { label: '光照度',   unit: 'Lux',   color: '#a855f7' },
+};
+
+async function loadDashboard() {
+  const espId = document.getElementById('dash-esp-filter').value;
+  const minutes = parseInt(document.getElementById('dash-range').value) || 30;
+
+  // 1. 获取最新值
+  let latestPath = '/api/data/latest';
+  if (espId) latestPath += '?esp_id=' + encodeURIComponent(espId);
+  let latest = [];
+  try { latest = await api(latestPath); } catch(e) { console.error(e); }
+
+  // 2. 获取时序数据
+  let queryPath = `/api/data/query?minutes=${minutes}&limit=300`;
+  if (espId) queryPath += '&esp_id=' + encodeURIComponent(espId);
+  let rows = [];
+  try { rows = await api(queryPath); } catch(e) { console.error(e); }
+
+  // 3. 按传感器类型分组
+  const groups = {};
+  for (const r of rows) {
+    const s = r.sensor;
+    if (!groups[s]) groups[s] = [];
+    groups[s].push(r);
+  }
+
+  // 4. 查找每种传感器在同一个来源下的最新值
+  const latestByType = {};
+  for (const l of latest) {
+    const key = l.sensor;
+    if (!latestByType[key]) latestByType[key] = [];
+    latestByType[key].push(l);
+  }
+
+  // 5. 渲染面板
+  const panels = document.getElementById('dash-panels');
+  const sensorTypes = Object.keys(groups).sort();
+
+  if (!sensorTypes.length) {
+    panels.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">暂无数据</div>';
+    return;
+  }
+
+  // 生成 HTML
+  panels.innerHTML = sensorTypes.map(sensorType => {
+    const cfg = SENSOR_CONFIG[sensorType] || { label: sensorType, unit: '', color: '#64748b' };
+    const data = groups[sensorType];
+    const latestVals = latestByType[sensorType] || [];
+
+    // 按 source 分组 series
+    const srcMap = {};
+    for (const r of data) {
+      const src = r.source || (r.esp_id + '-s' + (r.slave || '?'));
+      if (!srcMap[src]) srcMap[src] = [];
+      srcMap[src].push(r);
+    }
+
+    const canvasId = 'chart-' + sensorType;
+
+    return `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:${cfg.color};box-shadow:0 0 6px ${cfg.color};"></div>
+          <span style="font-weight:600;">${cfg.label}</span>
+          <span style="font-size:.75rem;color:var(--muted);">${cfg.unit}</span>
+        </div>
+        <div style="display:flex;gap:16px;font-size:.82rem;">
+          ${latestVals.map(l => `<span><strong style="color:${cfg.color};">${l.source||l.esp_id}</strong> <span style="color:var(--text);">${l.value} ${cfg.unit}</span></span>`).join('')}
+        </div>
+      </div>
+      <div style="padding:10px 14px 6px;position:relative;height:120px;">
+        <canvas id="${canvasId}"></canvas>
+      </div>
+      <div style="padding:0 16px 10px;max-height:100px;overflow-y:auto;">
+        <table style="width:100%;font-size:.72rem;color:var(--muted);">
+          ${data.slice(-6).reverse().map(r => `<tr>
+            <td style="padding:2px 6px;">${new Date(r.time).toLocaleTimeString('zh-CN')}</td>
+            <td style="color:var(--muted);">${r.source||r.esp_id}</td>
+            <td style="color:var(--text);text-align:right;">${r.value} ${cfg.unit}</td>
+          </tr>`).join('')}
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
+  // DOM 渲染完成后统一画图表
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      for (const sensorType of sensorTypes) {
+        const cfg = SENSOR_CONFIG[sensorType] || { label: sensorType, unit: '', color: '#64748b' };
+        const data = groups[sensorType];
+        const srcMap = {};
+        for (const r of data) {
+          const src = r.source || (r.esp_id + '-s' + (r.slave || '?'));
+          if (!srcMap[src]) srcMap[src] = [];
+          srcMap[src].push(r);
+        }
+        renderMiniChart('chart-' + sensorType, srcMap, cfg.color);
+      }
+    });
+  });
+}
+
+function renderMiniChart(canvasId, srcMap, baseColor) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  if (dashCharts[canvasId]) dashCharts[canvasId].destroy();
+
+  // 生成统一的时间标签（取所有数据的去重时间，间隔采样）
+  const allTimes = new Set();
+  for (const data of Object.values(srcMap)) {
+    for (const d of data) {
+      allTimes.add(new Date(d.time).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+    }
+  }
+  const labels = [...allTimes];
+
+  const colors = [baseColor, '#06b6d4', '#84cc16', '#ec4899', '#f59e0b'];
+  const datasets = Object.entries(srcMap).map(([src, data], i) => {
+    // 构建 label → value 映射
+    const valMap = {};
+    for (const d of data) {
+      const label = new Date(d.time).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      valMap[label] = d.value;
+    }
+    return {
+      label: src,
+      data: labels.map(l => valMap[l] ?? null),
+      borderColor: colors[i % colors.length],
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.2,
+      spanGaps: true,
+    };
+  });
+
+  dashCharts[canvasId] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 8, autoSkip: true },
+          grid: { color: '#1e293b' },
+        },
+        y: {
+          ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 5 },
+          grid: { color: '#1e293b' },
+        },
+      },
+      interaction: { mode: 'nearest', intersect: false },
+    },
+  });
+}
+
+function toggleAutoRefresh() {
+  const checked = document.getElementById('dash-auto-refresh').checked;
+  if (checked) autoRefreshTimer = setInterval(loadDashboard, 5000);
+  else { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
+
+async function loadDashFilters() {
+  try {
+    const sensors = await api('/api/data/sensors');
+    const selE = document.getElementById('dash-esp-filter');
+    const esps = [...new Set(sensors.map(s=>s.esp_id))];
+    selE.innerHTML = '<option value="">全部 ESP</option>' + esps.map(e=>`<option>${e}</option>`).join('');
+  } catch(e) {}
+}
+
+// ======================== 区域管理 ========================
+let editingAreaId = null;
+async function loadAreas() {
+  const data = await api('/api/areas');
+  const t = document.getElementById('area-tbody');
+  t.innerHTML = data.length ? data.map(d => `<tr>
+    <td>${d.id}</td>
+    <td><a style="color:var(--blue);cursor:pointer;text-decoration:underline;" onclick="viewAreaTrees(${d.id})">${d.name}</a></td>
+    <td>${d.esp_count||0}</td>
+    <td><a style="color:var(--blue);cursor:pointer;" onclick="viewAreaTrees(${d.id})">${d.tree_count||0} 棵</a></td>
+    <td>${d.description||'-'}</td>
+    <td class="actions"><button class="btn btn-outline btn-sm" onclick="openAreaModal(${d.id},'${d.name}','${d.description||''}')">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delArea(${d.id})">删除</button></td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty">暂无区域</td></tr>';
+}
+function openAreaModal(id='',name='',desc='') {
+  editingAreaId = id; document.getElementById('area-modal-title').textContent=id?'编辑区域':'新增区域';
+  document.getElementById('f-area-name').value=name; document.getElementById('f-area-desc').value=desc;
+  openModal('area-modal');
+}
+async function saveArea() {
+  const name=document.getElementById('f-area-name').value.trim(), description=document.getElementById('f-area-desc').value.trim();
+  if(!name) return toast('名称不能为空',false);
+  if(editingAreaId) await api('/api/areas/'+editingAreaId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description})});
+  else await api('/api/areas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description})});
+  closeModal('area-modal'); loadAreas(); toast(editingAreaId?'已更新':'已创建');
+}
+function viewAreaTrees(areaId) {
+  document.getElementById('tree-filter-area').value = areaId;
+  switchTab('trees');
+}
+async function delArea(id) { if(!confirm('确定删除？')) return; await api('/api/areas/'+id,{method:'DELETE'}); loadAreas(); toast('已删除'); }
+
+// ======================== 盆景树 ========================
+let editingTreeId = null, treeDetailData = null;
+async function loadTrees() {
+  const aid=document.getElementById('tree-filter-area').value, species=document.getElementById('tree-filter-species').value,
+        health=document.getElementById('tree-filter-health').value;
+  let url='/api/trees?';
+  if(aid) url+='area_id='+aid+'&'; if(species) url+='species='+encodeURIComponent(species)+'&'; if(health) url+='health_status='+encodeURIComponent(health)+'&';
+  const data = await api(url);
+  const div = document.getElementById('tree-cards');
+  if(!data.length){ div.innerHTML='<div style="width:100%;text-align:center;padding:40px;color:var(--muted);">暂无树木</div>'; return; }
+  div.innerHTML = data.map(d => `<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;width:240px;cursor:pointer;" onclick="openTreeDetail(${d.id})">
+    <div style="height:160px;background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;">
+      ${d.cover_url ? `<img src="${d.cover_url}" style="width:100%;height:100%;object-fit:cover;">` : `<span style="color:var(--muted);font-size:2rem;">🌳</span>`}
+    </div>
+    <div style="padding:10px 14px;">
+      <div style="font-weight:600;">${d.name}</div>
+      <div style="font-size:.75rem;color:var(--muted);">${d.species}${d.variety?' · '+d.variety:''} · ${d.age_years||'?'}年</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:.72rem;">
+        <span style="color:${d.health_status==='健康'?'#22c55e':d.health_status==='病虫害'?'#ef4444':'#f59e0b'};">● ${d.health_status||'-'}</span>
+        <span style="color:var(--muted);">📷${d.photo_count||0} 📋${d.event_count||0}</span>
+      </div>
+      <div style="font-size:.68rem;color:var(--muted);margin-top:2px;">${d.area_name||'-'}</div>
+    </div>
+  </div>`).join('');
+  // 填充过滤下拉
+  loadTreeFilters(data);
+}
+async function loadTreeFilters(data) {
+  const all = data.length ? data : await api('/api/trees');
+  const species = [...new Set(all.map(d=>d.species).filter(Boolean))], areas = [...new Set(all.map(d=>d.area_name).filter(Boolean))];
+  const selS = document.getElementById('tree-filter-species'); selS.innerHTML='<option value="">全部树种</option>'+species.map(s=>`<option>${s}</option>`).join('');
+  // 区域从 api 获取
+  try{const ad=await api('/api/areas'); document.getElementById('tree-filter-area').innerHTML='<option value="">全部区域</option>'+ad.map(a=>`<option value="${a.id}">${a.name}</option>`).join('');}catch(e){}
+}
+async function openTreeDetail(id) {
+  treeDetailData = await api('/api/trees/'+id);
+  const d = treeDetailData;
+  const div = document.getElementById('tree-detail-content');
+  // 渲染传感器面板
+  let sensorPanels = '';
+  if(d.sensors && d.sensors.length){
+    // 异步获取实时值
+    const latest = await api('/api/data/latest').catch(()=>[]);
+    sensorPanels = `<div style="margin-top:12px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <h4 style="margin:0;font-size:.85rem;color:var(--muted);">📡 绑定传感器</h4>
+        <button class="btn btn-primary btn-sm" style="font-size:.7rem;padding:2px 10px;" onclick="openInstanceModal('','','','1','',${d.id})">+ 绑定</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">`;
+    for(const s of d.sensors){
+      const regs = s.registers||[];
+      const regDesc = {};
+      for(const r of regs) regDesc[r.reg_name] = r;
+      const vals = latest.filter(l => l.slave && parseInt(l.slave) === s.slave_address);
+      sensorPanels += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <div style="font-size:.8rem;font-weight:600;">${s.brand_name} ${s.model} <span style="color:var(--muted);font-weight:400;">· ${s.custom_name||'从站'+s.slave_address}</span></div>
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-outline btn-sm" style="font-size:.65rem;padding:2px 8px;" onclick="openInstanceModal(${s.id},'${s.esp_id}',${s.template_id},${s.slave_address},'${s.custom_name||''}',${d.id})">编辑</button>
+            <button class="btn btn-outline btn-sm" style="font-size:.65rem;padding:2px 8px;" onclick="unbindSensor(${s.id})">解绑</button>
+            <button class="btn btn-danger btn-sm" style="font-size:.65rem;padding:2px 8px;" onclick="delInstance(${s.id})">删除</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">`;
+      for(const r of regs){
+        const realVal = vals.find(v => v.sensor === (r.description||r.reg_name));
+        const v = realVal ? realVal.value : '--';
+        const bg = {'temperature':'#ef4444','humidity':'#3b82f6','moisture':'#22c55e','conductivity':'#f59e0b','lux':'#a855f7'}[r.reg_name]||'#64748b';
+        sensorPanels += `<div style="min-width:80px;text-align:center;">
+          <div style="font-size:.65rem;color:var(--muted);">${r.description||r.reg_name}</div>
+          <div id="sensor-val-${s.id}-${r.reg_name}" style="font-size:1.1rem;font-weight:700;color:${bg};">${v}</div>
+          <div style="font-size:.6rem;color:var(--muted);">${r.unit||''}</div>
+        </div>`;
+      }
+      sensorPanels += `</div></div>`;
+    }
+    sensorPanels += '</div></div>';
+  }
+
+  div.innerHTML = `<div style="display:flex;gap:24px;margin-bottom:20px;">
+    <div style="flex-shrink:0;width:200px;height:200px;background:var(--bg);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:4rem;">🌳</div>
+    <div style="flex:1;">
+      <h2 style="margin:0 0 4px;">${d.name}</h2>
+      <p style="color:var(--muted);font-size:.85rem;margin:0 0 8px;">${d.species} ${d.variety||''} · ${d.age_years||'?'}年 · ${d.pot_type||''} ${d.pot_size||''}</p>
+      <p style="font-size:.8rem;color:var(--muted);">区域: ${d.area_name||'-'} | 来源: ${d.source||'-'} | 状态: <span style="color:${d.health_status==='健康'?'#22c55e':d.health_status==='病虫害'?'#ef4444':'#f59e0b'};">${d.health_status||'-'}</span> | 阶段: ${d.growth_stage||'-'}</p>
+      ${d.purchase_price ? `<p style="font-size:.8rem;color:var(--muted);">购入: ¥${d.purchase_price} → 当前估值: ¥${d.current_value||'-'}</p>`:''}
+      ${d.description ? `<p style="font-size:.8rem;color:var(--text);margin-top:8px;">${d.description}</p>`:''}
+      ${sensorPanels}
+    </div>
+  </div>
+  <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);">
+    <button class="btn btn-outline btn-sm" style="border-bottom:none;border-radius:6px 6px 0 0;background:var(--blue);color:#fff;" onclick="loadTreeTab('timeline',${d.id})">时间线</button>
+    <button class="btn btn-outline btn-sm" style="border-bottom:none;" onclick="loadTreeTab('events',${d.id})" id="tab-events-btn">事件</button>
+    <button class="btn btn-outline btn-sm" style="border-bottom:none;" onclick="loadTreeTab('photos',${d.id})" id="tab-photos-btn">照片</button>
+  </div>
+  <div id="tree-tab-content"></div>`;
+  switchTab('tree-detail');
+  loadTreeTab('timeline', id);
+  document.getElementById('photo-upload-input').dataset.treeId = id;
+  startTreeRefresh();
+}
+async function loadTreeTab(tab, treeId) {
+  const div = document.getElementById('tree-tab-content');
+  document.querySelectorAll('#tree-detail-content .btn-outline.btn-sm').forEach(b=>b.style.background='transparent');
+  div.innerHTML = '<span style="color:var(--muted);">加载中...</span>';
+  if(tab==='timeline'){
+    const data = await api('/api/trees/'+treeId+'/timeline');
+    div.innerHTML = data.length ? data.map(r=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <div style="width:90px;font-size:.75rem;color:var(--muted);flex-shrink:0;">${new Date(r.ts).toLocaleDateString('zh-CN')}</div>
+      <div><span style="background:var(--bg);padding:1px 6px;border-radius:3px;font-size:.7rem;color:var(--muted);">${r.kind==='event'?r.event_type||r.category:r.photo_type}</span>
+      <strong style="margin-left:6px;">${r.summary||'(无标题)'}</strong></div></div>`).join('')
+      : '<div class="empty">暂无记录</div>';
+  }else if(tab==='events'){
+    const data = await api('/api/trees/'+treeId+'/events');
+    div.innerHTML = data.length ? data.map(r=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);align-items:flex-start;">
+      <div style="width:90px;font-size:.75rem;color:var(--muted);flex-shrink:0;">${r.event_date}</div>
+      <div style="flex:1;"><strong>${r.title}</strong> <span style="font-size:.7rem;color:var(--muted);">${r.category}/${r.event_type}</span>
+      ${r.description?`<div style="font-size:.8rem;color:var(--text);">${r.description}</div>`:''}
+      ${r.performed_by?`<div style="font-size:.7rem;color:var(--muted);">操作: ${r.performed_by}</div>`:''}</div>
+      <button class="btn btn-outline btn-sm" onclick="openEventModal(${r.id},'${r.category||''}','${r.event_type||''}','${r.title}','${r.event_date}','${r.performed_by||''}','${r.description||''}',${r.cost||0})">编辑</button>
+      <button class="btn btn-danger btn-sm" onclick="delEvent(${r.id})">删</button></div>`).join('')
+      : '<div class="empty">暂无事件</div>';
+    document.getElementById('tab-events-btn').style.background='var(--blue)';
+  }else if(tab==='photos'){
+    const data = await api('/api/trees/'+treeId+'/photos');
+    div.innerHTML = data.length ? `<div style="display:flex;flex-wrap:wrap;gap:12px;">`+data.map(r=>`<div style="background:var(--bg);border-radius:8px;overflow:hidden;width:180px;">
+      <img src="${r.url}" style="width:100%;height:140px;object-fit:cover;" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 fill=%22%23666%22>🌳</text></svg>'">
+      <div style="padding:6px 8px;"><div style="font-size:.72rem;">${r.season||''} · ${r.view_angle||''} · ${r.photo_type||''}</div>
+      ${r.note?`<div style="font-size:.68rem;color:var(--muted);">${r.note}</div>`:''}
+      <div style="margin-top:4px;display:flex;gap:4px;">
+      <button class="btn btn-outline btn-sm" style="font-size:.65rem;" onclick="setCover(${r.id})">封面</button>
+      <button class="btn btn-danger btn-sm" style="font-size:.65rem;" onclick="delPhoto(${r.id})">删</button></div></div></div>`).join('')+'</div>'
+      : '<div class="empty">暂无照片</div>';
+    document.getElementById('tab-photos-btn').style.background='var(--blue)';
+  }
+}
+function openTreeModal(objOrId){
+  if(objOrId && typeof objOrId === 'object'){
+    // 来自详情页编辑
+    const d=objOrId; editingTreeId=d.id;
+    document.getElementById('tree-modal-title').textContent='编辑树';
+    document.getElementById('f-tree-name').value=d.name||''; document.getElementById('f-tree-species').value=d.species||'';
+    document.getElementById('f-tree-variety').value=d.variety||''; document.getElementById('f-tree-age').value=d.age_years||'';
+    document.getElementById('f-tree-height').value=d.height_cm||''; document.getElementById('f-tree-trunk').value=d.trunk_diameter||'';
+    document.getElementById('f-tree-crown').value=d.crown_width||''; document.getElementById('f-tree-pot').value=d.pot_type||'';
+    document.getElementById('f-tree-source').value=d.source||''; document.getElementById('f-tree-health').value=d.health_status||'健康';
+    document.getElementById('f-tree-desc').value=d.description||'';
+    loadAreasOpts(d.area_id);
+    openModal('tree-modal');
+    return;
+  }
+  editingTreeId=null; document.getElementById('tree-modal-title').textContent='新增树';
+  document.querySelectorAll('#tree-modal input').forEach(el=>{if(el.type!=='number'||el.id==='f-tree-age')el.value='';});
+  document.getElementById('f-tree-health').value='健康';
+  loadAreasOpts(); openModal('tree-modal');
+}
+async function loadAreasOpts(sel){try{const d=await api('/api/areas');document.getElementById('f-tree-area').innerHTML=d.map(a=>`<option value="${a.id}" ${a.id==sel?'selected':''}>${a.name}</option>`).join('');}catch(e){}}
+async function saveTree(){
+  const d=document.getElementById; const name=d('f-tree-name').value.trim();
+  if(!name) return toast('名称不能为空',false);
+  const body={area_id:parseInt(d('f-tree-area').value)||null,name,species:d('f-tree-species').value.trim(),variety:d('f-tree-variety').value.trim(),
+    age_years:parseInt(d('f-tree-age').value)||null,height_cm:parseFloat(d('f-tree-height').value)||null,
+    trunk_diameter:parseFloat(d('f-tree-trunk').value)||null,crown_width:parseFloat(d('f-tree-crown').value)||null,
+    pot_type:d('f-tree-pot').value.trim(),source:d('f-tree-source').value.trim(),health_status:d('f-tree-health').value,
+    description:d('f-tree-desc').value.trim()};
+  if(editingTreeId) await api('/api/trees/'+editingTreeId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  else await api('/api/trees',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  closeModal('tree-modal'); loadTrees(); toast(editingTreeId?'已更新':'已创建');
+}
+async function delTree(id){if(!confirm('确定删除？将删除所有事件和照片。'))return;await api('/api/trees/'+id,{method:'DELETE'});loadTrees();toast('已删除');}
+
+// ---- 事件 ----
+let editingEventId=null,detailTreeId=null;
+function openEventModal(id,cat,type,title,date,person,desc,cost){
+  editingEventId=id; document.getElementById('event-modal-title').textContent=id?'编辑事件':'新增事件';
+  document.getElementById('f-ev-cat').value=cat||'养护'; document.getElementById('f-ev-type').value=type||'';
+  document.getElementById('f-ev-title').value=title||''; document.getElementById('f-ev-date').value=date||'';
+  document.getElementById('f-ev-person').value=person||''; document.getElementById('f-ev-desc').value=desc||'';
+  detailTreeId=treeDetailData?treeDetailData.id:null; openModal('event-modal');
+}
+async function saveEvent(){
+  const title=document.getElementById('f-ev-title').value.trim(),event_date=document.getElementById('f-ev-date').value;
+  if(!title||!event_date||!detailTreeId) return toast('标题和日期必填',false);
+  const body={category:document.getElementById('f-ev-cat').value,event_type:document.getElementById('f-ev-type').value.trim(),title,event_date,performed_by:document.getElementById('f-ev-person').value.trim(),description:document.getElementById('f-ev-desc').value.trim()};
+  if(editingEventId) await api('/api/events/'+editingEventId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  else await api('/api/trees/'+detailTreeId+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  closeModal('event-modal'); loadTreeTab('events',detailTreeId); toast(editingEventId?'已更新':'已创建');
+}
+async function delEvent(id){if(!confirm('确定删除？'))return;await api('/api/events/'+id,{method:'DELETE'});loadTreeTab('events',detailTreeId);toast('已删除');}
+
+// ---- 树详情传感器定时刷新 ----
+let treeRefreshTimer = null;
+async function refreshTreeSensorValues(){
+  if(!treeDetailData || !treeDetailData.sensors) return;
+  const latest = await api('/api/data/latest').catch(()=>[]);
+  for(const s of treeDetailData.sensors){
+    const vals = latest.filter(l => l.slave && parseInt(l.slave) === s.slave_address);
+    for(const r of (s.registers||[])){
+      const realVal = vals.find(v => v.sensor === (r.description||r.reg_name));
+      const el = document.getElementById('sensor-val-'+s.id+'-'+r.reg_name);
+      if(el) el.textContent = realVal ? realVal.value : '--';
+    }
+  }
+}
+function startTreeRefresh(){
+  if(treeRefreshTimer) clearInterval(treeRefreshTimer);
+  treeRefreshTimer = setInterval(refreshTreeSensorValues, 3000);
+}
+function stopTreeRefresh(){
+  if(treeRefreshTimer){ clearInterval(treeRefreshTimer); treeRefreshTimer = null; }
+}
+
+// ---- 照片 ----
+async function uploadPhoto(input){
+  const treeId=input.dataset.treeId; if(!treeId||!input.files[0]) return;
+  const form=new FormData(); form.append('file',input.files[0]); form.append('view_angle','正面');
+  try{
+    await fetch('/api/trees/'+treeId+'/photos',{method:'POST',body:form});
+    toast('照片上传成功'); loadTreeTab('photos',treeId); input.value='';
+  }catch(e){toast('上传失败',false);}
+}
+async function setCover(pid){await api('/api/photos/'+pid+'/cover',{method:'POST'});toast('封面已设置');loadTreeTab('photos',detailTreeId?detailTreeId.id:0);}
+async function delPhoto(pid){if(!confirm('确定删除照片？'))return;await api('/api/photos/'+pid,{method:'DELETE'});toast('已删除');loadTreeTab('photos',detailTreeId?detailTreeId.id:0);}
+
+// ======================== 配置下发 & 继电器控制 ========================
+let dispatchingEsp = 'rtu-001';  // 当前操作的 ESP
+async function dispatchConfig(espId) {
+  const id = espId || dispatchingEsp;
+  const status = document.getElementById('esp-dispatch-status');
+  status.textContent = '下发中...';
+  try {
+    const r = await api('/api/esp/'+encodeURIComponent(id)+'/dispatch', {method:'POST'});
+    status.textContent = '✅ 已下发 ('+new Date().toLocaleTimeString()+')';
+    toast('配置已下发到 '+id);
+  } catch(e) {
+    status.textContent = '❌ 失败';
+    toast(e.message, false);
+  }
+}
+async function relayControl(espId, channel, on) {
+  try {
+    const act = on ? 'on' : 'off';
+    await api('/api/esp/'+encodeURIComponent(espId)+'/relay/'+channel+'/'+act, {method:'POST'});
+    toast('继电器 '+(espId)+' CH'+channel+' → '+(on?'ON':'OFF'));
+  } catch(e) { toast(e.message, false); }
+}
+
+// ======================== 启动 ========================
+loadDashFilters();
+loadDashboard();
+toggleAutoRefresh();
+</script>
+</body>
+</html>
