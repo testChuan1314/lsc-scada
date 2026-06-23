@@ -9,6 +9,7 @@ from services.parser import (
     load_template_with_polling, load_template_registers, parse_modbus_hex,
 )
 from services.influx import write_ts_point
+from services.alarm.engine import record_esp_activity
 
 logger = logging.getLogger("scada-app")
 mqtt_client = mqtt_lib.Client(client_id="lsc_scada_app")
@@ -23,6 +24,9 @@ def on_message(client, userdata, msg):
         topic_parts = msg.topic.split("/")
         esp_id = topic_parts[2]
         payload = msg.payload.decode("utf-8").strip()
+
+        # 记录 ESP 活跃时间（用于心跳检测）
+        record_esp_activity(esp_id)
 
         if topic_parts[-1] == "input":
             logger.info(f"光耦输入 esp={esp_id} → {payload}")

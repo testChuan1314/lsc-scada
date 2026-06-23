@@ -92,3 +92,10 @@ class RelayCreate(BaseModel):
     esp_id: str; channel: int; name: str = ""; reg_address: Optional[int] = None
 class RelayUpdate(BaseModel):
     name: Optional[str] = None; reg_address: Optional[int] = None
+
+# ---- 告警 ----
+class AlarmConfirm(BaseModel):
+    confirmed_by: str = ""
+
+class AlarmQuery(BaseModel):
+    status: Optional[str] = None; esp_id: Optional[str] = None; tree_id: Optional[int] = None

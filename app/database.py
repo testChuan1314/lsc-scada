@@ -21,6 +21,7 @@ def init_postgres():
                   "register_definitions","sensor_instances","relay_instances",
                   "sensor_templates","sensor_brands","esp_devices","sensors","devices"):
             cur.execute(f"DROP TABLE IF EXISTS {t} CASCADE;")
+        cur.execute("DROP TABLE IF EXISTS alarm_records CASCADE;")
 
         # 1. 区域
         cur.execute("""
@@ -160,5 +161,30 @@ def init_postgres():
                 channel INTEGER NOT NULL, name VARCHAR(128), reg_address INTEGER, created_at TIMESTAMP DEFAULT NOW()
             );
         """)
+        # 11. 告警记录
+        cur.execute("""
+            CREATE TABLE alarm_records (
+                id SERIAL PRIMARY KEY,
+                rule_name VARCHAR(64) NOT NULL,
+                category VARCHAR(32) DEFAULT 'sensor_fault',
+                severity VARCHAR(16) DEFAULT 'warning',
+                status VARCHAR(16) DEFAULT 'pending',
+                message VARCHAR(512),
+                detail_json JSONB DEFAULT '{}',
+                tree_id INTEGER REFERENCES trees(id) ON DELETE SET NULL,
+                esp_id VARCHAR(64),
+                sensor_name VARCHAR(64),
+                dedup_key VARCHAR(256) NOT NULL,
+                triggered_at TIMESTAMP DEFAULT NOW(),
+                resolved_at TIMESTAMP,
+                confirmed_at TIMESTAMP,
+                confirmed_by VARCHAR(64),
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_alarm_dedup_active ON alarm_records(dedup_key) WHERE status = 'active';")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_alarm_esp ON alarm_records(esp_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_alarm_tree ON alarm_records(tree_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_alarm_status ON alarm_records(status);")
         cur.close()
-    logger.info("数据库 11 表初始化完成")
+    logger.info("数据库 12 表初始化完成")

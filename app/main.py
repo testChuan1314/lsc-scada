@@ -13,8 +13,9 @@ from services.dispatcher import push_config_to_esp
 from config import MQTT_HOST, MQTT_PORT
 
 from routers import esp, brands, templates, registers, instances, relays, dispatch, data
-from routers import areas, trees, users
+from routers import areas, trees, users, alarms
 from wechat.router import router as wechat_router
+from services.alarm.engine import alarm_engine, record_esp_activity
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scada-app")
@@ -22,7 +23,7 @@ logger = logging.getLogger("scada-app")
 app = FastAPI(title="川枫景云 - 盆景全生命周期管理")
 
 # 注册 API 路由
-for r in (esp, brands, templates, registers, instances, relays, dispatch, data, areas, trees, users):
+for r in (esp, brands, templates, registers, instances, relays, dispatch, data, areas, trees, users, alarms):
     app.include_router(r.router)
 app.include_router(trees.router_event)
 app.include_router(trees.router_photo)
@@ -52,5 +53,11 @@ if __name__ == "__main__":
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
-    logger.info("LSC SCADA 主站启动完成")
+    # 启动告警引擎（异步任务）
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(alarm_engine.start())
+
+    logger.info("LSC SCADA 主站启动完成（告警引擎已启动）")
     uvicorn.run(app, host="0.0.0.0", port=8000)
