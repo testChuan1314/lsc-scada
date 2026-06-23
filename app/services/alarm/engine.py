@@ -1,7 +1,7 @@
-"""告警引擎 —— 定时器驱动，独立于 MQTT 消息处理"""
-import asyncio
+"""告警引擎 —— 独立线程，定时轮询 InfluxDB，运行所有规则，推送通知"""
 import logging
 import threading
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
@@ -30,31 +30,32 @@ def record_esp_activity(esp_id: str, ts: Optional[datetime] = None):
 
 
 class AlarmEngine:
-    """告警引擎 —— 定时轮询 InfluxDB，运行所有规则，推送通知"""
+    """告警引擎 —— 同步定时循环，跑在独立 daemon 线程里"""
 
     def __init__(self):
+        self._thread: Optional[threading.Thread] = None
         self._running = False
-        self._task: Optional[asyncio.Task] = None
 
-    async def start(self):
-        """启动引擎（异步任务）"""
+    def start(self):
+        """启动引擎"""
+        if self._running:
+            return
         self._running = True
-        self._task = asyncio.create_task(self._loop())
-        logger.info("告警引擎已启动")
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="alarm-engine")
+        self._thread.start()
+        logger.info("告警引擎已启动（独立线程）")
 
-    async def stop(self):
+    def stop(self):
         """停止引擎"""
         self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        if self._thread:
+            self._thread.join(timeout=10)
         logger.info("告警引擎已停止")
 
-    async def _loop(self):
-        """主循环：快周期 30 秒 + 慢周期 5 分钟"""
+    # ── 主循环 ──
+
+    def _loop(self):
+        """主循环：每 30 秒跑 Layer 0 + 心跳，每 5 分钟跑 Layer 1 + Layer 2"""
         fast_ticks = 0
         while self._running:
             try:
@@ -62,9 +63,8 @@ class AlarmEngine:
                 ctx = TemporalContext.at(now)
                 fast_ticks += 1
 
-                # ── 快周期：每次 ──
-                # Layer 0: 数据质量
-                windows = await self._fetch_all_sensor_windows(now, lookback_minutes=15)
+                # ══ 快周期：每次（数据质量 + 心跳）══
+                windows = self._fetch_all_sensor_windows(now, lookback_minutes=15)
                 for win in windows:
                     for rule_fn in LAYER0_RULES:
                         try:
@@ -73,17 +73,16 @@ class AlarmEngine:
                                 notifications = alarm_state_machine.process_verdicts(verdicts, now)
                                 send_notifications(notifications)
                         except Exception as e:
-                            logger.error(f"规则 {rule_fn.__name__} 执行失败: {e}", exc_info=True)
+                            logger.error(f"规则 {rule_fn.__name__} 失败: {e}")
 
-                # ESP 心跳检查
                 self._check_esp_heartbeats(now)
 
-                # ── 慢周期：每 10 个快周期（≈5 分钟）──
+                # ══ 慢周期：每 10 个快周期（≈5 分钟）═
                 if fast_ticks % 10 == 0:
-                    windows = await self._fetch_all_sensor_windows(now, lookback_minutes=30)
+                    logger.debug("触发慢周期评估 (Layer 1 + 2)")
+                    windows = self._fetch_all_sensor_windows(now, lookback_minutes=30)
 
                     for win in windows:
-                        # Layer 1: 物理验证
                         for rule_fn in LAYER1_RULES:
                             try:
                                 verdicts = rule_fn(win, ctx)
@@ -91,9 +90,8 @@ class AlarmEngine:
                                     notifications = alarm_state_machine.process_verdicts(verdicts, now)
                                     send_notifications(notifications)
                             except Exception as e:
-                                logger.error(f"规则 {rule_fn.__name__} 执行失败: {e}", exc_info=True)
+                                logger.error(f"规则 {rule_fn.__name__} 失败: {e}")
 
-                        # Layer 2: 养护评估
                         for rule_fn in LAYER2_RULES:
                             try:
                                 verdicts = rule_fn(win, ctx)
@@ -101,15 +99,20 @@ class AlarmEngine:
                                     notifications = alarm_state_machine.process_verdicts(verdicts, now)
                                     send_notifications(notifications)
                             except Exception as e:
-                                logger.error(f"规则 {rule_fn.__name__} 执行失败: {e}", exc_info=True)
+                                logger.error(f"规则 {rule_fn.__name__} 失败: {e}")
 
             except Exception as e:
                 logger.error(f"告警引擎循环异常: {e}", exc_info=True)
 
-            await asyncio.sleep(30)
+            # 睡眠 30 秒，支持优雅退出
+            for _ in range(30):
+                if not self._running:
+                    break
+                time.sleep(1)
+
+    # ── 数据获取 ──
 
     def _check_esp_heartbeats(self, now: datetime):
-        """检查所有 ESP 心跳"""
         with _esp_last_seen_lock:
             esp_list = list(_esp_last_seen.items())
 
@@ -119,16 +122,11 @@ class AlarmEngine:
                 notifications = alarm_state_machine.process_verdicts([verdict], now)
                 send_notifications(notifications)
 
-    async def _fetch_all_sensor_windows(self, now: datetime, lookback_minutes: int) -> list:
-        """
-        从 InfluxDB 拉取所有传感器实例的最近 N 分钟数据，
-        以树为维度组织 SensorWindow。
-        """
+    def _fetch_all_sensor_windows(self, now: datetime, lookback_minutes: int) -> list:
         try:
             from database import get_db
             import psycopg2.extras
 
-            # 查询所有传感器实例及其绑定的树、ESP
             with get_db() as conn:
                 cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
                 cur.execute("""
@@ -148,11 +146,7 @@ class AlarmEngine:
             for r in rows:
                 key = (r["tree_id"], r["esp_id"])
                 if key not in groups:
-                    groups[key] = {
-                        "tree_id": r["tree_id"],
-                        "esp_id": r["esp_id"],
-                        "sensors": [],
-                    }
+                    groups[key] = {"tree_id": r["tree_id"], "esp_id": r["esp_id"], "sensors": []}
                 groups[key]["sensors"].append(r)
 
             windows = []
@@ -160,24 +154,8 @@ class AlarmEngine:
                 tree_id = group["tree_id"]
                 esp_id = group["esp_id"]
 
-                # 从 InfluxDB 拉取时序数据
-                sensor_data, last_times = await self._fetch_influx_series(
-                    esp_id, lookback_minutes
-                )
+                sensor_data, last_times = self._fetch_influx_series(esp_id, lookback_minutes)
 
-                if not sensor_data:
-                    # 没有数据也创建一个空窗口（用于数据新鲜度检查）
-                    win = SensorWindow(
-                        now=now,
-                        lookback_minutes=lookback_minutes,
-                        tree_id=tree_id,
-                        esp_id=esp_id,
-                        last_data_time=last_times,
-                    )
-                    windows.append(win)
-                    continue
-
-                # 按 sensor key 分组
                 series_map: dict[str, list] = {}
                 for pt in sensor_data:
                     skey = pt.get("sensor", "")
@@ -185,27 +163,19 @@ class AlarmEngine:
                     if val is not None:
                         series_map.setdefault(skey, []).append(val)
 
-                # 映射到 SensorWindow 字段
                 field_map = {
-                    "temperature": "air_temp",
-                    "humidity": "air_humidity",
-                    "soil_temp": "soil_temp",
-                    "soil_moisture": "soil_moisture",
-                    "conductivity": "conductivity",
-                    "lux": "lux",
-                    "rainfall": "rainfall",
-                    "leaf_temp": "leaf_temp",
+                    "temperature": "air_temp", "humidity": "air_humidity",
+                    "soil_temp": "soil_temp", "soil_moisture": "soil_moisture",
+                    "conductivity": "conductivity", "lux": "lux",
+                    "rainfall": "rainfall", "leaf_temp": "leaf_temp",
                     "leaf_humidity": "leaf_humidity",
                 }
 
                 win_kwargs = {
-                    "now": now,
-                    "lookback_minutes": lookback_minutes,
-                    "tree_id": tree_id,
-                    "esp_id": esp_id,
+                    "now": now, "lookback_minutes": lookback_minutes,
+                    "tree_id": tree_id, "esp_id": esp_id,
                     "last_data_time": last_times,
                 }
-
                 for influx_key, attr_name in field_map.items():
                     values = series_map.get(influx_key, [])
                     if values:
@@ -219,8 +189,7 @@ class AlarmEngine:
             logger.error(f"拉取传感器数据窗口失败: {e}", exc_info=True)
             return []
 
-    async def _fetch_influx_series(self, esp_id: str, minutes: int):
-        """从 InfluxDB 拉取时序数据，返回 (数据点列表, 各传感器最后时间)"""
+    def _fetch_influx_series(self, esp_id: str, minutes: int):
         try:
             from config import INFLUX_BUCKET
             flux = f'''
@@ -232,7 +201,6 @@ class AlarmEngine:
             '''
             rows = influx_query(flux)
 
-            # 计算每个传感器最后数据时间
             last_times = {}
             for r in rows:
                 sensor = r.get("sensor", "")
@@ -251,5 +219,4 @@ class AlarmEngine:
             return [], {}
 
 
-# 全局引擎实例
 alarm_engine = AlarmEngine()

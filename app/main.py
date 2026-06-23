@@ -53,11 +53,8 @@ if __name__ == "__main__":
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
-    # 启动告警引擎（异步任务）
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(alarm_engine.start())
+    # 启动告警引擎（独立 daemon 线程）
+    alarm_engine.start()
 
     logger.info("LSC SCADA 主站启动完成（告警引擎已启动）")
     uvicorn.run(app, host="0.0.0.0", port=8000)
