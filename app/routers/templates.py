@@ -1,8 +1,9 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg2, psycopg2.extras
 from database import get_db
 from models import TemplateCreate, TemplateUpdate
+from services.auth import require_permission
 
 router = APIRouter(prefix="/api/templates", tags=["Templates"])
 
@@ -18,7 +19,7 @@ def list_templates(brand_id: Optional[int] = None):
     return [dict(r) for r in rows]
 
 @router.post("", status_code=201)
-def create_template(body: TemplateCreate):
+def create_template(body: TemplateCreate, user = Depends(require_permission("sensor:write"))):
     try:
         with get_db() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)

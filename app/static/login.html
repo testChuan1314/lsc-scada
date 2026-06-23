@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>川枫景云 - 登录</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: linear-gradient(135deg, #0a1628 0%, #1a2a1a 40%, #0d2818 100%);
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+  }
+  .login-box {
+    background: rgba(15, 30, 20, 0.9);
+    border: 1px solid rgba(45, 120, 60, 0.3);
+    border-radius: 16px; padding: 48px 40px;
+    width: 100%; max-width: 400px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 80px rgba(45,120,60,0.08);
+  }
+  .logo { text-align:center; margin-bottom:32px; }
+  .logo .icon { font-size:3.2rem; filter:drop-shadow(0 0 20px rgba(34,197,94,0.3)); }
+  .logo h1 { font-size:2rem; font-weight:700; letter-spacing:4px;
+    background:linear-gradient(135deg,#4ade80,#22c55e,#16a34a);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+  .logo p { font-size:.78rem; color:#4ade8066; margin-top:6px; letter-spacing:2px; }
+  .form-group { margin-bottom:18px; }
+  .form-group label { display:block; font-size:.75rem; color:#4ade8099; margin-bottom:5px; }
+  .form-group input { width:100%; padding:11px 14px; background:rgba(10,22,40,0.8);
+    border:1px solid rgba(45,120,60,0.3); border-radius:8px; color:#e2e8f0; font-size:.95rem; }
+  .form-group input:focus { outline:none; border-color:#4ade80; box-shadow:0 0 0 2px rgba(74,222,128,0.1); }
+  .btn-login { width:100%; padding:12px; background:linear-gradient(135deg,#22c55e,#16a34a);
+    border:none; border-radius:8px; color:#fff; font-size:1rem; font-weight:600;
+    cursor:pointer; letter-spacing:2px; transition:.2s; margin-top:8px; }
+  .btn-login:hover { filter:brightness(1.1); box-shadow:0 4px 20px rgba(34,197,94,0.3); }
+  .error { color:#ef4444; font-size:.75rem; text-align:center; margin-top:12px; min-height:20px; }
+  .footer { text-align:center; margin-top:24px; font-size:.7rem; color:#4ade8044; }
+  .hint { text-align:center; margin-top:16px; font-size:.7rem; color:#4ade8044; }
+</style>
+</head>
+<body>
+<div class="login-box">
+  <div class="logo">
+    <div class="icon">🌳</div>
+    <h1>川枫景云</h1>
+    <p>温江 · 盆景全生命周期管理</p>
+  </div>
+  <div class="form-group">
+    <label>账号</label>
+    <input id="username" placeholder="请输入账号" autocomplete="username">
+  </div>
+  <div class="form-group">
+    <label>密码</label>
+    <input id="password" type="password" placeholder="请输入密码" autocomplete="current-password">
+  </div>
+  <button class="btn-login" onclick="doLogin()">登 录</button>
+  <div class="error" id="error"></div>
+  <div class="hint">测试账号: admin / laoli / manager &nbsp; 密码: 123456</div>
+  <div class="footer">川枫盆景园 · <span>温江</span></div>
+</div>
+<script>
+async function doLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const err = document.getElementById('error');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = '请输入账号和密码'; return; }
+  try {
+    const r = await fetch('/api/auth/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    if (!r.ok) { const e = await r.json().catch(()=>({detail:'登录失败'})); err.textContent = e.detail; return; }
+    const data = await r.json();
+    localStorage.setItem('lsc_token', data.token);
+    localStorage.setItem('lsc_user', JSON.stringify(data.user));
+    window.location.href = '/index.html';
+  } catch(e) { err.textContent = '网络错误'; }
+}
+document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+</script>
+</body>
+</html>

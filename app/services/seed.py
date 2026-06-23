@@ -8,10 +8,46 @@ def seed_sample_data():
     with get_db() as conn:
         cur = conn.cursor()
 
+        # ====== 预置角色 ======
+        cur.execute("INSERT INTO roles (id,name,code,description) VALUES (1,'超级管理员','admin','拥有所有权限') ON CONFLICT DO NOTHING;")
+        cur.execute("INSERT INTO roles (id,name,code,description) VALUES (2,'区域管理员','area_manager','管辖区域内设备/树管理+数据查看') ON CONFLICT DO NOTHING;")
+        cur.execute("INSERT INTO roles (id,name,code,description) VALUES (3,'养护员','gardener','管辖区域内树详情/事件/照片/传感器数据') ON CONFLICT DO NOTHING;")
+        cur.execute("INSERT INTO roles (id,name,code,description) VALUES (4,'游客','viewer','只读查看管辖区域数据') ON CONFLICT DO NOTHING;")
+
+        # ====== 预置权限 ======
+        perms = [
+            (1,"area:read","查看区域","area","read"),(2,"area:write","管理区域","area","write"),
+            (3,"esp:read","查看ESP","esp","read"),(4,"esp:write","管理ESP","esp","write"),
+            (5,"sensor:read","查看传感器数据","sensor","read"),(6,"sensor:write","管理传感器配置","sensor","write"),
+            (7,"tree:read","查看树木","tree","read"),(8,"tree:write","管理树木","tree","write"),
+            (9,"event:write","新增事件","event","write"),(10,"photo:upload","上传照片","photo","upload"),
+            (11,"relay:control","控制继电器","relay","control"),(12,"user:manage","管理用户","user","write"),
+        ]
+        for pid, code, name, res, act in perms:
+            cur.execute("INSERT INTO permissions (id,code,name,resource,action) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (pid, code, name, res, act))
+
+        # ====== 角色→权限映射 ======
+        rp = {
+            1: [1,2,3,4,5,6,7,8,9,10,11,12],  # admin: 全部
+            2: [1,3,5,7,8,9,10,11],              # area_manager
+            3: [1,3,5,7,9,10],                   # gardener
+            4: [1,3,5,7],                        # viewer
+        }
+        for rid, pids in rp.items():
+            for pid in pids:
+                cur.execute("INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s) ON CONFLICT DO NOTHING", (rid, pid))
+
+        # ====== 测试用户（密码: 123456） ======
+        from services.auth import hash_password
+        pw = hash_password("123456")
+        cur.execute("INSERT INTO users (id,username,password_hash,display_name,phone,role_id) VALUES (1,'admin',%s,'管理员','13800000000',1) ON CONFLICT DO NOTHING;", (pw,))
+        cur.execute("INSERT INTO users (id,username,password_hash,display_name,phone,role_id) VALUES (2,'laoli',%s,'老李','13800000001',3) ON CONFLICT DO NOTHING;", (pw,))
+        cur.execute("INSERT INTO users (id,username,password_hash,display_name,phone,role_id) VALUES (3,'manager',%s,'大棚负责人','13800000002',2) ON CONFLICT DO NOTHING;", (pw,))
+
         # 区域
-        cur.execute("INSERT INTO areas (id,name,description) VALUES (1,'A区大棚','室内大棚养护区') ON CONFLICT DO NOTHING;")
-        cur.execute("INSERT INTO areas (id,name,description) VALUES (2,'露天养护区','室外自然养护') ON CONFLICT DO NOTHING;")
-        cur.execute("INSERT INTO areas (id,name,description) VALUES (3,'展示区','参展盆景陈列区') ON CONFLICT DO NOTHING;")
+        cur.execute("INSERT INTO areas (id,name,description) VALUES (1,'一号大棚','川枫景云 · 温江室内养护区') ON CONFLICT DO NOTHING;")
+        cur.execute("INSERT INTO areas (id,name,description) VALUES (2,'露天养护区','川枫景云 · 室外自然养护') ON CONFLICT DO NOTHING;")
+        cur.execute("INSERT INTO areas (id,name,description) VALUES (3,'精品展示区','川枫景云 · 参展盆景陈列') ON CONFLICT DO NOTHING;")
 
         # 品牌
         cur.execute("INSERT INTO sensor_brands (brand_name) VALUES ('仁科') ON CONFLICT DO NOTHING;")
@@ -104,4 +140,12 @@ def seed_sample_data():
             cur.execute("INSERT INTO tree_events (tree_id,category,event_type,title,event_date,performed_by,description) VALUES (%s,'换盆','换盆','换盆升级','2025-02-15','老李','方盆→大一号方盆，根系健康') ON CONFLICT DO NOTHING", (bhs,))
         cur.close()
 
-    logger.info("种子数据完成 (3区域+1ESP+2品牌×3模板×9寄存器+3实例+4树+4继电器+2事件)")
+    # 用户管辖区域
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO user_areas (user_id,area_id) VALUES (2,1) ON CONFLICT DO NOTHING;")  # 老李→A区大棚
+        cur.execute("INSERT INTO user_areas (user_id,area_id) VALUES (3,1) ON CONFLICT DO NOTHING;")  # 大棚负责人→A区大棚
+        cur.execute("INSERT INTO user_areas (user_id,area_id) VALUES (3,2) ON CONFLICT DO NOTHING;")  # 大棚负责人→露天养护区
+        cur.close()
+
+    logger.info("种子数据完成 (4角色+12权限+3用户+3区域+1ESP+2品牌×3模板×9寄存器+3实例+4树+4继电器+2事件)")

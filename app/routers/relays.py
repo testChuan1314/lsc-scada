@@ -1,22 +1,26 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg2, psycopg2.extras
 from database import get_db
 from models import RelayCreate, RelayUpdate
+from services.auth import get_current_user, require_permission, area_filter_sql
 
 router = APIRouter(prefix="/api/relays", tags=["Relays"])
 
 @router.get("")
-def list_relays(esp_id: Optional[str] = None):
+def list_relays(esp_id: Optional[str] = None, user = Depends(get_current_user)):
+    af = area_filter_sql(user, "e.area_id")
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        if esp_id: cur.execute("SELECT * FROM relay_instances WHERE esp_id=%s ORDER BY id", (esp_id,))
-        else:      cur.execute("SELECT * FROM relay_instances ORDER BY id")
+        if esp_id:
+            cur.execute(f"SELECT r.* FROM relay_instances r JOIN esp_devices e ON r.esp_id=e.esp_id WHERE r.esp_id=%s AND {af} ORDER BY r.id", (esp_id,))
+        else:
+            cur.execute(f"SELECT r.* FROM relay_instances r JOIN esp_devices e ON r.esp_id=e.esp_id WHERE {af} ORDER BY r.id")
         rows = cur.fetchall(); cur.close()
     return [dict(r) for r in rows]
 
 @router.post("", status_code=201)
-def create_relay(body: RelayCreate):
+def create_relay(body: RelayCreate, user = Depends(require_permission("sensor:write"))):
     try:
         with get_db() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -28,7 +32,7 @@ def create_relay(body: RelayCreate):
         raise HTTPException(400, f"ESP '{body.esp_id}' 不存在")
 
 @router.put("/{relay_id}")
-def update_relay(relay_id: int, body: RelayUpdate):
+def update_relay(relay_id: int, body: RelayUpdate, user = Depends(require_permission("sensor:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SELECT * FROM relay_instances WHERE id=%s", (relay_id,))
@@ -44,7 +48,7 @@ def update_relay(relay_id: int, body: RelayUpdate):
     return dict(row)
 
 @router.delete("/{relay_id}")
-def delete_relay(relay_id: int):
+def delete_relay(relay_id: int, user = Depends(require_permission("sensor:write"))):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM relay_instances WHERE id=%s", (relay_id,))

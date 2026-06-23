@@ -1,8 +1,9 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg2, psycopg2.extras
 from database import get_db
 from models import RegisterCreate, RegisterUpdate
+from services.auth import require_permission
 
 router = APIRouter(prefix="/api/registers", tags=["Registers"])
 

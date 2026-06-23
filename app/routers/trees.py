@@ -2,10 +2,11 @@
 import os, uuid, shutil
 from typing import Optional
 from datetime import datetime, date
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Depends
 import psycopg2, psycopg2.extras
 from database import get_db
 from models import TreeCreate, TreeUpdate, EventCreate, EventUpdate, PhotoUpdate
+from services.auth import get_current_user, require_permission, area_filter_sql
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "uploads", "trees")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -21,13 +22,14 @@ def _season(d: date) -> str:
 
 # ==================== 树 CRUD ====================
 @router.get("")
-def list_trees(area_id: Optional[int] = None, species: str = "", health_status: str = ""):
+def list_trees(area_id: Optional[int] = None, species: str = "", health_status: str = "", user = Depends(get_current_user)):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         where, vals = [], []
         if area_id:        where.append("t.area_id=%s"); vals.append(area_id)
         if species:        where.append("t.species ILIKE %s"); vals.append(f"%{species}%")
         if health_status:  where.append("t.health_status=%s"); vals.append(health_status)
+        where.append(area_filter_sql(user, "t.area_id"))
         w = "WHERE " + " AND ".join(where) if where else ""
         cur.execute(f"""
             SELECT t.*, a.name AS area_name,
@@ -66,7 +68,7 @@ def get_tree(tree_id: int):
     return {**dict(row), "sensors": sensors}
 
 @router.post("", status_code=201)
-def create_tree(body: TreeCreate):
+def create_tree(body: TreeCreate, user = Depends(require_permission("tree:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cols = "area_id,name,species,variety,age_years,height_cm,trunk_diameter,crown_width,pot_type,pot_size,source,purchase_date,purchase_price,current_value,health_status,growth_stage,description,lat,lng"
@@ -79,7 +81,7 @@ def create_tree(body: TreeCreate):
     return dict(row)
 
 @router.put("/{tree_id}")
-def update_tree(tree_id: int, body: TreeUpdate):
+def update_tree(tree_id: int, body: TreeUpdate, user = Depends(require_permission("tree:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SELECT * FROM trees WHERE id=%s", (tree_id,))
@@ -100,7 +102,7 @@ def update_tree(tree_id: int, body: TreeUpdate):
     return dict(row)
 
 @router.delete("/{tree_id}")
-def delete_tree(tree_id: int):
+def delete_tree(tree_id: int, user = Depends(require_permission("tree:write"))):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM trees WHERE id=%s", (tree_id,))
@@ -152,7 +154,7 @@ def list_events(tree_id: int):
     return [dict(r) for r in rows]
 
 @router.post("/{tree_id}/events", status_code=201)
-def create_event(tree_id: int, body: EventCreate):
+def create_event(tree_id: int, body: EventCreate, user = Depends(require_permission("event:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("INSERT INTO tree_events (tree_id,category,event_type,title,description,event_date,performed_by,cost) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
@@ -210,6 +212,7 @@ async def upload_photo(
     photo_type: str = Form("routine"),
     event_id: Optional[int] = Form(None),
     note: str = Form(""),
+    user = Depends(require_permission("photo:upload")),
 ):
     # 保存文件
     ext = file.filename.rsplit(".", 1)[-1] if "." in (file.filename or "") else "jpg"

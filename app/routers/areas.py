@@ -1,26 +1,26 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg2, psycopg2.extras
 from database import get_db
 from models import AreaCreate, AreaUpdate
+from services.auth import get_current_user, require_permission
 
 router = APIRouter(prefix="/api/areas", tags=["Areas"])
 
 @router.get("")
-def list_areas():
+def list_areas(user = Depends(get_current_user)):
+    from services.auth import area_filter_sql
+    af = area_filter_sql(user, "a.id")
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("""
-            SELECT a.*, COUNT(DISTINCT e.id) AS esp_count, COUNT(DISTINCT t.id) AS tree_count
-            FROM areas a LEFT JOIN esp_devices e ON e.area_id=a.id
-            LEFT JOIN trees t ON t.area_id=a.id
-            GROUP BY a.id ORDER BY a.id
-        """)
+        cur.execute(f"""SELECT a.*, COUNT(DISTINCT e.id) AS esp_count, COUNT(DISTINCT t.id) AS tree_count
+            FROM areas a LEFT JOIN esp_devices e ON e.area_id=a.id LEFT JOIN trees t ON t.area_id=a.id
+            WHERE {af} GROUP BY a.id ORDER BY a.id""")
         rows = cur.fetchall(); cur.close()
     return [dict(r) for r in rows]
 
 @router.post("", status_code=201)
-def create_area(body: AreaCreate):
+def create_area(body: AreaCreate, user = Depends(require_permission("area:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("INSERT INTO areas (name,parent_id,description) VALUES (%s,%s,%s) RETURNING *",
@@ -29,7 +29,7 @@ def create_area(body: AreaCreate):
     return dict(row)
 
 @router.put("/{area_id}")
-def update_area(area_id: int, body: AreaUpdate):
+def update_area(area_id: int, body: AreaUpdate, user = Depends(require_permission("area:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SELECT * FROM areas WHERE id=%s", (area_id,))
@@ -45,7 +45,7 @@ def update_area(area_id: int, body: AreaUpdate):
     return dict(row)
 
 @router.delete("/{area_id}")
-def delete_area(area_id: int):
+def delete_area(area_id: int, user = Depends(require_permission("area:write"))):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM areas WHERE id=%s", (area_id,))

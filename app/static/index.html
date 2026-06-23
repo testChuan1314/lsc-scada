@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LSC SCADA 管理台</title>
+<title>川枫景云 - 盆景管理台</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   :root { --bg:#0f172a; --card:#1e293b; --border:#334155; --text:#e2e8f0; --muted:#94a3b8;
@@ -60,10 +60,15 @@
 <body>
 
 <nav>
-  <div class="logo">🛰 LSC SCADA</div>
+  <div class="logo">🌳 川枫景云</div>
+  <div style="padding:8px 18px;font-size:.7rem;color:var(--muted);">
+    当前: <span id="nav-username" style="color:#4ade80;"></span>
+    <br><a style="color:var(--muted);cursor:pointer;font-size:.65rem;" onclick="doLogout()">退出登录</a>
+  </div>
   <a data-page="dashboard" style="color:#22c55e;">📊 数据看板</a>
   <a data-page="areas">📍 区域管理</a>
   <a data-page="trees">🌳 盆景树</a>
+  <a data-page="users">👥 用户管理</a>
   <a class="active" data-page="esp">📡 ESP 设备</a>
   <a data-page="brands">🏷 传感器品牌</a>
   <a data-page="templates">📋 模板管理</a>
@@ -100,6 +105,22 @@
     <div class="toolbar"><button class="btn btn-primary" onclick="openAreaModal()">+ 新增区域</button></div>
     <div class="table-wrap"><table><thead><tr><th>ID</th><th>名称</th><th>ESP数量</th><th>树木数量</th><th>描述</th><th>操作</th></tr></thead><tbody id="area-tbody"></tbody></table></div>
   </div>
+
+  <!-- ==================== 用户管理 ==================== -->
+  <div class="page" id="page-users">
+    <h2>用户管理</h2><p class="sub">角色分配 · 管辖区域 · 微信绑定</p>
+    <div class="toolbar"><button class="btn btn-primary" onclick="openUserModal()">+ 新增用户</button></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>手机号</th><th>角色</th><th>微信</th><th>管辖区域</th><th>状态</th><th>操作</th></tr></thead><tbody id="user-tbody"></tbody></table></div>
+  </div>
+
+  <div class="overlay" id="user-modal"><div class="modal">
+    <h3 id="user-modal-title">新增用户</h3>
+    <div class="form-group"><label>姓名 *</label><input id="f-user-name" placeholder="老李"></div>
+    <div class="form-group"><label>手机号</label><input id="f-user-phone" placeholder="13800000001"></div>
+    <div class="form-group"><label>角色</label><select id="f-user-role"></select></div>
+    <div class="form-group"><label>管辖区域 (可多选)</label><div id="f-user-areas" style="display:flex;flex-wrap:wrap;gap:8px;"></div></div>
+    <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('user-modal')">取消</button><button class="btn btn-primary" onclick="saveUser()">保存</button></div>
+  </div></div>
 
   <!-- ==================== 盆景树 ==================== -->
   <div class="page" id="page-trees">
@@ -288,6 +309,12 @@
 <div class="toast" id="toast"></div>
 
 <script>
+function doLogout() { localStorage.clear(); window.location.href='/login.html'; }
+try {
+  const user = JSON.parse(localStorage.getItem('lsc_user')||'{}');
+  document.getElementById('nav-username').textContent = user.display_name||user.username||'?';
+} catch(e) {}
+
 // ======================== 导航 ========================
 function switchTab(page) {
   if (page !== 'tree-detail') stopTreeRefresh();
@@ -296,7 +323,7 @@ function switchTab(page) {
   if (target) target.classList.add('active');
   // 高亮对应菜单（树详情无菜单项，跳过）
   document.querySelectorAll('nav a').forEach(a => { a.classList.remove('active'); if (a.dataset.page === page) a.classList.add('active'); });
-  const loaders = {dashboard:loadDashboard, areas:loadAreas, trees:loadTrees, esp:loadEsp, brands:loadBrands, templates:loadTemplates, registers:loadRegisters, instances:loadInstances, relays:loadRelays};
+  const loaders = {dashboard:loadDashboard, areas:loadAreas, trees:loadTrees, users:loadUsers, esp:loadEsp, brands:loadBrands, templates:loadTemplates, registers:loadRegisters, instances:loadInstances, relays:loadRelays};
   if (loaders[page]) loaders[page]();
 }
 document.querySelectorAll('nav a').forEach(a => {
@@ -308,7 +335,17 @@ function toast(msg, ok=true) { const el=document.getElementById('toast'); el.tex
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function fmt(ts) { return ts?new Date(ts+'Z').toLocaleString('zh-CN'):'-'; }
-async function api(url, opts) { const r=await fetch(url,opts); if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||'请求失败');} return r.json(); }
+const token = localStorage.getItem('lsc_token');
+if (!token) { window.location.href = '/login.html'; }
+async function api(url, opts) {
+  if (!opts) opts = {};
+  if (!opts.headers) opts.headers = {};
+  opts.headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(url,opts);
+  if(r.status===401){ localStorage.clear(); window.location.href='/login.html'; return; }
+  if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||'请求失败');}
+  return r.json();
+}
 
 // ======================== ESP ========================
 let editingEspId=null;
@@ -982,6 +1019,47 @@ async function uploadPhoto(input){
 }
 async function setCover(pid){await api('/api/photos/'+pid+'/cover',{method:'POST'});toast('封面已设置');loadTreeTab('photos',detailTreeId?detailTreeId.id:0);}
 async function delPhoto(pid){if(!confirm('确定删除照片？'))return;await api('/api/photos/'+pid,{method:'DELETE'});toast('已删除');loadTreeTab('photos',detailTreeId?detailTreeId.id:0);}
+
+// ======================== 用户管理 ========================
+let editingUserId = null;
+async function loadUsers() {
+  const data = await api('/api/users');
+  const t = document.getElementById('user-tbody');
+  t.innerHTML = data.length ? data.map(d => `<tr>
+    <td>${d.id}</td><td><strong>${d.display_name||'-'}</strong></td><td>${d.phone||'-'}</td>
+    <td><span style="font-size:.75rem;background:var(--bg);padding:2px 8px;border-radius:4px;">${d.role_name||'-'}</span></td>
+    <td style="font-size:.75rem;">${d.wechat_nickname||'-'}<br><span style="color:var(--muted);">${d.wechat_openid?d.wechat_openid.substring(0,12)+'...':'-'}</span></td>
+    <td style="font-size:.72rem;">${(d.area_ids||[]).join(', ')||'-'}</td>
+    <td>${d.is_active?'<span style="color:#22c55e;">启用</span>':'<span style="color:#ef4444;">禁用</span>'}</td>
+    <td class="actions"><button class="btn btn-outline btn-sm" onclick="openUserModal(${d.id},'${d.display_name||''}','${d.phone||''}',${d.role_id||'null'},[${(d.area_ids||[]).join(',')}])">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="delUser(${d.id})">删除</button></td></tr>`).join('')
+    : '<tr><td colspan="8" class="empty">暂无用户</td></tr>';
+}
+async function openUserModal(id, name='', phone='', role_id=null, area_ids=[]) {
+  editingUserId = id; document.getElementById('user-modal-title').textContent=id?'编辑用户':'新增用户';
+  document.getElementById('f-user-name').value=name||''; document.getElementById('f-user-phone').value=phone||'';
+  // 角色下拉
+  const roles = await api('/api/roles');
+  document.getElementById('f-user-role').innerHTML = roles.map(r=>`<option value="${r.id}" ${r.id==role_id?'selected':''}>${r.name}</option>`).join('');
+  // 区域多选
+  const areas = await api('/api/areas');
+  document.getElementById('f-user-areas').innerHTML = areas.map(a=>`<label style="font-size:.78rem;color:var(--muted);"><input type="checkbox" value="${a.id}" ${area_ids.includes(a.id)?'checked':''}> ${a.name}</label>`).join('');
+  openModal('user-modal');
+}
+async function saveUser() {
+  const display_name=document.getElementById('f-user-name').value.trim(), phone=document.getElementById('f-user-phone').value.trim(),
+        role_id=parseInt(document.getElementById('f-user-role').value)||null;
+  if(!display_name) return toast('姓名不能为空',false);
+  // 获取选中区域
+  const area_ids = [...document.querySelectorAll('#f-user-areas input:checked')].map(el=>parseInt(el.value));
+  let user;
+  if(editingUserId) user = await api('/api/users/'+editingUserId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name,phone,role_id})});
+  else user = await api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name,phone,role_id})});
+  // 更新管辖区域
+  await api('/api/users/'+user.id+'/areas',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({area_ids})});
+  closeModal('user-modal'); loadUsers(); toast(editingUserId?'已更新':'已创建');
+}
+async function delUser(id) { if(!confirm('确定删除？')) return; await api('/api/users/'+id,{method:'DELETE'}); loadUsers(); toast('已删除'); }
 
 // ======================== 配置下发 & 继电器控制 ========================
 let dispatchingEsp = 'rtu-001';  // 当前操作的 ESP

@@ -13,18 +13,20 @@ from services.dispatcher import push_config_to_esp
 from config import MQTT_HOST, MQTT_PORT
 
 from routers import esp, brands, templates, registers, instances, relays, dispatch, data
-from routers import areas, trees
+from routers import areas, trees, users
+from wechat.router import router as wechat_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scada-app")
 
-app = FastAPI(title="LSC SCADA Core")
+app = FastAPI(title="川枫景云 - 盆景全生命周期管理")
 
 # 注册 API 路由
-for r in (esp, brands, templates, registers, instances, relays, dispatch, data, areas, trees):
+for r in (esp, brands, templates, registers, instances, relays, dispatch, data, areas, trees, users):
     app.include_router(r.router)
 app.include_router(trees.router_event)
 app.include_router(trees.router_photo)
+app.include_router(wechat_router)
 
 # 上传文件挂载
 uploads_dir = os.path.join(os.path.dirname(__file__), "static", "uploads")

@@ -48,6 +48,21 @@ class PhotoUpdate(BaseModel):
     note: Optional[str] = None; taken_at: Optional[datetime] = None
     event_id: Optional[int] = None
 
+# ---- 用户 / 角色 / 权限 ----
+class UserCreate(BaseModel):
+    display_name: str = ""; phone: str = ""; role_id: Optional[int] = None
+    wechat_openid: str = ""; wechat_nickname: str = ""; wechat_avatar: str = ""
+class UserUpdate(BaseModel):
+    display_name: Optional[str] = None; phone: Optional[str] = None
+    role_id: Optional[int] = None; is_active: Optional[bool] = None
+    wechat_nickname: Optional[str] = None; wechat_avatar: Optional[str] = None
+class UserAreaUpdate(BaseModel):
+    area_ids: list[int] = []
+class RoleCreate(BaseModel):
+    name: str; code: str; description: str = ""
+class PermissionCreate(BaseModel):
+    code: str; name: str = ""; resource: str = ""; action: str = ""
+
 # ---- 原有传感器模型 ----
 class EspCreate(BaseModel):
     esp_id: str; name: str = ""; location: str = ""; mqtt_topic: str = ""; area_id: Optional[int] = None

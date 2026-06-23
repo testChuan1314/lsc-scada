@@ -1,19 +1,22 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg2, psycopg2.extras
 from database import get_db
 from models import EspCreate, EspUpdate
+from services.auth import get_current_user, require_permission, area_filter_sql
 
 router = APIRouter(prefix="/api/esp", tags=["ESP"])
 
 @router.get("")
-def list_esp():
+def list_esp(user = Depends(get_current_user)):
+    af = area_filter_sql(user, "e.area_id")
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT e.*, a.name AS area_name FROM esp_devices e LEFT JOIN areas a ON e.area_id=a.id ORDER BY e.id"); rows = cur.fetchall(); cur.close()
+        cur.execute(f"SELECT e.*, a.name AS area_name FROM esp_devices e LEFT JOIN areas a ON e.area_id=a.id WHERE {af} ORDER BY e.id")
+        rows = cur.fetchall(); cur.close()
     return [dict(r) for r in rows]
 
 @router.post("", status_code=201)
-def create_esp(body: EspCreate):
+def create_esp(body: EspCreate, user = Depends(require_permission("esp:write"))):
     try:
         with get_db() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -25,7 +28,7 @@ def create_esp(body: EspCreate):
         raise HTTPException(400, f"ESP '{body.esp_id}' 已存在")
 
 @router.put("/{esp_id}")
-def update_esp(esp_id: str, body: EspUpdate):
+def update_esp(esp_id: str, body: EspUpdate, user = Depends(require_permission("esp:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SELECT * FROM esp_devices WHERE esp_id=%s", (esp_id,))
@@ -41,7 +44,7 @@ def update_esp(esp_id: str, body: EspUpdate):
     return dict(row)
 
 @router.delete("/{esp_id}")
-def delete_esp(esp_id: str):
+def delete_esp(esp_id: str, user = Depends(require_permission("esp:write"))):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM esp_devices WHERE esp_id=%s", (esp_id,))

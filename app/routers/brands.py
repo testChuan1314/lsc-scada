@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import psycopg2, psycopg2.extras
 from database import get_db
 from models import BrandCreate, BrandUpdate
+from services.auth import require_permission
 
 router = APIRouter(prefix="/api/brands", tags=["Brands"])
 
@@ -13,7 +14,7 @@ def list_brands():
     return [dict(r) for r in rows]
 
 @router.post("", status_code=201)
-def create_brand(body: BrandCreate):
+def create_brand(body: BrandCreate, user = Depends(require_permission("sensor:write"))):
     try:
         with get_db() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -25,7 +26,7 @@ def create_brand(body: BrandCreate):
         raise HTTPException(400, f"品牌 '{body.brand_name}' 已存在")
 
 @router.put("/{brand_id}")
-def update_brand(brand_id: int, body: BrandUpdate):
+def update_brand(brand_id: int, body: BrandUpdate, user = Depends(require_permission("sensor:write"))):
     with get_db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SELECT * FROM sensor_brands WHERE id=%s", (brand_id,))
@@ -41,7 +42,7 @@ def update_brand(brand_id: int, body: BrandUpdate):
     return dict(row)
 
 @router.delete("/{brand_id}")
-def delete_brand(brand_id: int):
+def delete_brand(brand_id: int, user = Depends(require_permission("sensor:write"))):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM sensor_brands WHERE id=%s", (brand_id,))

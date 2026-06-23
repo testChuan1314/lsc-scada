@@ -16,7 +16,8 @@ def get_db():
 def init_postgres():
     with get_db() as conn:
         cur = conn.cursor()
-        for t in ("tree_photos","tree_events","trees","areas",
+        for t in ("tree_photos","tree_events","trees","user_areas","users",
+                  "role_permissions","permissions","roles","areas",
                   "register_definitions","sensor_instances","relay_instances",
                   "sensor_templates","sensor_brands","esp_devices","sensors","devices"):
             cur.execute(f"DROP TABLE IF EXISTS {t} CASCADE;")
@@ -29,6 +30,47 @@ def init_postgres():
                 description VARCHAR(512), created_at TIMESTAMP DEFAULT NOW()
             );
         """)
+        # ---- 用户权限体系 ----
+        cur.execute("""
+            CREATE TABLE roles (
+                id SERIAL PRIMARY KEY, name VARCHAR(64) NOT NULL,
+                code VARCHAR(32) UNIQUE NOT NULL, description VARCHAR(256),
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE permissions (
+                id SERIAL PRIMARY KEY, code VARCHAR(64) UNIQUE NOT NULL,
+                name VARCHAR(128), resource VARCHAR(64), action VARCHAR(32),
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE role_permissions (
+                role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+                permission_id INTEGER REFERENCES permissions(id) ON DELETE CASCADE,
+                PRIMARY KEY(role_id, permission_id)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE users (
+                id SERIAL PRIMARY KEY, username VARCHAR(64) UNIQUE NOT NULL,
+                password_hash VARCHAR(256) NOT NULL, display_name VARCHAR(128),
+                phone VARCHAR(32), wechat_openid VARCHAR(128) UNIQUE,
+                wechat_nickname VARCHAR(128), wechat_avatar VARCHAR(512),
+                role_id INTEGER REFERENCES roles(id),
+                is_active BOOLEAN DEFAULT TRUE, last_login TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE user_areas (
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                area_id INTEGER REFERENCES areas(id) ON DELETE CASCADE,
+                PRIMARY KEY(user_id, area_id)
+            );
+        """)
+
         # 2. ESP
         cur.execute("""
             CREATE TABLE esp_devices (
