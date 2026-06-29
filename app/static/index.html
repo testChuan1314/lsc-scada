@@ -94,6 +94,25 @@
         <input type="checkbox" id="dash-auto-refresh" checked onchange="toggleAutoRefresh()"> 自动刷新
       </label>
     </div>
+    <!-- VPD 蒸腾评估面板 -->
+    <div id="dash-vpd" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-weight:600;">💧 蒸腾评估</span>
+          <span id="dash-vpd-value" style="font-size:1.4rem;font-weight:700;"></span>
+          <span id="dash-vpd-status" style="padding:3px 12px;border-radius:12px;font-size:.78rem;font-weight:600;"></span>
+        </div>
+        <div style="display:flex;gap:16px;font-size:.78rem;flex-wrap:wrap;">
+          <span id="dash-vpd-stomata" style="color:var(--muted);"></span>
+          <span id="dash-vpd-cwsi" style="color:var(--muted);"></span>
+          <span id="dash-vpd-cooling" style="color:var(--muted);"></span>
+        </div>
+      </div>
+      <div style="margin-top:6px;font-size:.75rem;color:var(--muted);">
+        <span id="dash-vpd-effect"></span>
+        <span id="dash-vpd-suggestion" style="margin-left:12px;font-weight:600;"></span>
+      </div>
+    </div>
     <div id="dash-panels" style="display:flex;flex-direction:column;gap:16px;">
       <span style="color:var(--muted);">加载中...</span>
     </div>
@@ -586,9 +605,51 @@ const SENSOR_CONFIG = {
   '光照度 0~65535': { label: '光照度',   unit: 'Lux',   color: '#a855f7' },
 };
 
+async function loadVpdPanel(espId) {
+  const panel = document.getElementById('dash-vpd');
+  try {
+    const url = espId ? `/api/transpiration/summary?esp_id=${encodeURIComponent(espId)}` : '/api/transpiration/summary';
+    const data = await api(url);
+    if (!data || !data.length) { panel.style.display = 'none'; return; }
+    // 取第一个传感器的结果（通常只有一组气温+湿度）
+    const r = data[0];
+    panel.style.display = 'block';
+    document.getElementById('dash-vpd-value').textContent = `${r.vpd_air} kPa`;
+    document.getElementById('dash-vpd-value').style.color = r.vpd_color;
+    const status = document.getElementById('dash-vpd-status');
+    status.textContent = r.vpd_label;
+    status.style.background = r.vpd_color + '20';
+    status.style.color = r.vpd_color;
+    status.style.border = `1px solid ${r.vpd_color}40`;
+    document.getElementById('dash-vpd-stomata').textContent = '气孔: ' + (r.vpd_stomata||'—');
+    document.getElementById('dash-vpd-effect').textContent = r.vpd_effect||'';
+    if (r.vpd_suggestion) {
+      document.getElementById('dash-vpd-suggestion').textContent = '建议: ' + r.vpd_suggestion;
+    } else {
+      document.getElementById('dash-vpd-suggestion').textContent = '';
+    }
+    // CWSI
+    if (r.cwsi !== null && r.cwsi !== undefined) {
+      document.getElementById('dash-vpd-cwsi').textContent = 'CWSI: ' + (r.cwsi*100).toFixed(0) + '%';
+    } else {
+      document.getElementById('dash-vpd-cwsi').textContent = '';
+    }
+    // 蒸腾冷却
+    if (r.leaf_cooling) {
+      const dt = r.leaf_delta_t !== null ? (r.leaf_delta_t > 0 ? '+'+r.leaf_delta_t.toFixed(1) : r.leaf_delta_t.toFixed(1)) : '—';
+      document.getElementById('dash-vpd-cooling').textContent = '叶-气温差: '+dt+'°C';
+    } else {
+      document.getElementById('dash-vpd-cooling').textContent = '';
+    }
+  } catch(e) { panel.style.display = 'none'; }
+}
+
 async function loadDashboard() {
   const espId = document.getElementById('dash-esp-filter').value;
   const minutes = parseInt(document.getElementById('dash-range').value) || 30;
+
+  // 0. 加载 VPD 面板
+  loadVpdPanel(espId);
 
   // 1. 获取最新值
   let latestPath = '/api/data/latest';
