@@ -72,10 +72,43 @@ class VpdInterpretation:
     suggestion: str = ""          # 养护建议
 
 
-def interpret_vpd(vpd_kpa: float, vpd_leaf_kpa: Optional[float] = None) -> VpdInterpretation:
-    """将 VPD 数值翻译为植物生理意义"""
+def interpret_vpd(vpd_kpa: float, vpd_leaf_kpa: Optional[float] = None,
+                  lux: Optional[float] = None) -> VpdInterpretation:
+    """将 VPD 数值翻译为植物生理意义。
+
+    核心修正：光照 ≈ 0（夜间）时，气孔生理性关闭，不管 VPD 多大蒸腾都接近零。
+    VPD 高只表示空气干燥，不代表植物在蒸腾。
+    """
     result = VpdInterpretation(vpd_kpa=vpd_kpa, vpd_leaf_kpa=vpd_leaf_kpa)
 
+    is_night = lux is not None and lux < 50
+
+    # ── 夜间：气孔关闭，VPD 仅反映空气干燥程度 ──
+    if is_night:
+        if vpd_kpa < 0.4:
+            result.level = "low"
+            result.label_cn = "夜间高湿"
+            result.color = "#3b82f6"
+            result.stomata_status = "气孔关闭（夜间正常）"
+            result.plant_effect = "夜间空气近乎饱和，无蒸腾。持续高湿增加真菌病害风险。"
+            result.suggestion = "如持续多夜高湿，注意通风"
+        elif vpd_kpa < 1.5:
+            result.level = "night_normal"
+            result.label_cn = "夜间正常"
+            result.color = "#64748b"
+            result.stomata_status = "气孔关闭（夜间正常）"
+            result.plant_effect = "夜间无蒸腾。空气湿度适中。植物正常休眠代谢。"
+            result.suggestion = "无需干预"
+        else:
+            result.level = "night_dry"
+            result.label_cn = "夜间干燥"
+            result.color = "#f59e0b"
+            result.stomata_status = "气孔关闭（夜间正常）"
+            result.plant_effect = "夜间空气偏干，但气孔关闭所以不蒸腾。不影响植物。"
+            result.suggestion = "无需干预。白天再观察 VPD。"
+        return result
+
+    # ── 白天：VPD 决定蒸腾强度 ──
     if vpd_kpa < 0.4:
         result.level = "low"
         result.label_cn = "过湿"
@@ -326,8 +359,8 @@ def assess_transpiration(
         result.cwsi = round(compute_cwsi(T_leaf, T_air, RH_air), 3)
         result.cwsi_interpretation = interpret_cwsi(result.cwsi) if result.cwsi is not None else ""
 
-    # VPD 解读
-    result.vpd_interpretation = interpret_vpd(result.vpd_air, result.vpd_leaf)
+    # VPD 解读（传入光照，夜间气孔关闭 ≠ 蒸腾良好）
+    result.vpd_interpretation = interpret_vpd(result.vpd_air, result.vpd_leaf, lux)
 
     # ET₀
     if T_max is not None and T_min is not None:
